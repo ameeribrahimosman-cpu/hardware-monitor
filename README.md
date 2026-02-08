@@ -20,8 +20,8 @@ OmniTop merges the best features of `nvtop`, `htop`, and `btop` into a single, c
 Requirements: Go 1.24.3+
 
 ```bash
-git clone https://github.com/google/omnitop.git
-cd omnitop
+git clone https://github.com/ameeribrahimosman-cpu/hardware-monitor.git
+cd hardware-monitor
 go build -o omnitop ./cmd/omnitop
 ```
 

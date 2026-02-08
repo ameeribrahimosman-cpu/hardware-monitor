@@ -6,6 +6,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/google/omnitop/internal/config"
 	"github.com/google/omnitop/internal/metrics"
 )
 
@@ -26,6 +27,7 @@ func tick() tea.Cmd {
 
 type RootModel struct {
 	provider metrics.Provider
+	config   *config.ProfileConfiguration
 
 	// Sub-models
 	gpu     GPUModel
@@ -44,15 +46,29 @@ type RootModel struct {
 	showTooltip    bool
 }
 
-func NewRootModel(provider metrics.Provider) RootModel {
+func NewRootModel(provider metrics.Provider, cfg *config.ProfileConfiguration) RootModel {
+	// Use configuration values or defaults
+	col1Pct := 0.30
+	col2Pct := 0.40
+	
+	if cfg != nil {
+		if val, ok := cfg.ColumnWidths["gpu"]; ok {
+			col1Pct = val
+		}
+		if val, ok := cfg.ColumnWidths["process"]; ok {
+			col2Pct = val
+		}
+	}
+
 	return RootModel{
 		provider: provider,
+		config:   cfg,
 		gpu:      NewGPUModel(),
 		process:  NewProcessModel(),
 		cpu:      NewCPUModel(),
 		footer:   NewFooterModel(),
-		col1Pct:  0.30, // 30%
-		col2Pct:  0.40, // 40%
+		col1Pct:  col1Pct,
+		col2Pct:  col2Pct,
 	}
 }
 
@@ -110,7 +126,12 @@ func (m RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.MouseMsg:
 		m.mouseX = msg.X
 		m.mouseY = msg.Y
-		// TODO: Hit testing for tooltips
+		// Basic tooltip handling - show if mouse is over footer area
+		if m.config != nil && m.config.ShowTooltips && m.mouseY >= m.height-1 {
+			m.showTooltip = true
+		} else {
+			m.showTooltip = false
+		}
 
 		// Pass mouse to sub-models
 		m.process, cmd = m.process.Update(msg)

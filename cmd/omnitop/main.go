@@ -7,6 +7,7 @@ import (
 	"os"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/google/omnitop/internal/config"
 	"github.com/google/omnitop/internal/metrics"
 	"github.com/google/omnitop/internal/ui"
 )
@@ -15,6 +16,14 @@ func main() {
 	// Parse flags
 	mockMode := flag.Bool("mock", false, "Run in mock mode with simulated data")
 	flag.Parse()
+
+	// Load configuration
+	cfg, err := config.LoadDefaultConfig()
+	if err != nil {
+		log.Printf("Warning: Failed to load configuration, using defaults: %v", err)
+		cfg = config.DefaultConfig()
+	}
+	log.Printf("Loaded configuration with theme: %s", cfg.Theme)
 
 	// Initialize metrics provider
 	var provider metrics.Provider
@@ -31,8 +40,8 @@ func main() {
 	}
 	defer provider.Shutdown()
 
-	// Create root model
-	root := ui.NewRootModel(provider)
+	// Create root model with configuration
+	root := ui.NewRootModel(provider, cfg)
 
 	// Start Bubble Tea program
 	p := tea.NewProgram(root, tea.WithAltScreen())
