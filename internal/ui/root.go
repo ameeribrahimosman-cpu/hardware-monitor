@@ -1,7 +1,9 @@
 package ui
 
 import (
+	"fmt"
 	"math/rand"
+	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -227,7 +229,45 @@ func (m RootModel) determineMouseRegion() string {
 func (m RootModel) getTooltipContent(region string) string {
 	switch region {
 	case "gpu":
-		return "GPU Panel: Shows GPU utilization, memory, temperature, and health status. Click to expand/collapse details."
+		gpuStats := m.gpu.stats
+		base := "GPU Panel: Shows GPU utilization, memory, temperature, and health status. Click to expand/collapse details."
+		
+		if gpuStats.Available {
+			// Add health status
+			healthInfo := ""
+			switch gpuStats.HealthStatus {
+			case metrics.GPUHealthHealthy:
+				healthInfo = "Health: ✅ Healthy"
+			case metrics.GPUHealthDegraded:
+				healthInfo = "Health: ⚠️ Degraded"
+			case metrics.GPUHealthFailed:
+				healthInfo = "Health: 🔴 Failed"
+			}
+			
+			// Add temperature warning if needed
+			tempWarning := ""
+			if gpuStats.Temperature > 90 {
+				tempWarning = " | 🔥 CRITICAL TEMPERATURE!"
+			} else if gpuStats.Temperature > 80 {
+				tempWarning = " | ⚠️ High Temperature"
+			}
+			
+			// Add fan warning
+			fanWarning := ""
+			if gpuStats.Temperature > 80 && gpuStats.FanSpeed < 30 {
+				fanWarning = " | 💨 Low Fan Speed"
+			}
+			
+			// Add error info if any
+			errorInfo := ""
+			if gpuStats.ErrorCount > 0 {
+				errorInfo = fmt.Sprintf(" | Errors: %d", gpuStats.ErrorCount)
+			}
+			
+			return fmt.Sprintf("%s\n\n%s%s%s%s", base, healthInfo, tempWarning, fanWarning, errorInfo)
+		}
+		return base
+		
 	case "process":
 		return "Process List: Shows running processes with highest GPU/CPU usage. Use Up/Down arrows to navigate."
 	case "cpu":
@@ -261,8 +301,6 @@ func (m RootModel) View() string {
 	if m.showTooltip && m.currentTooltipRegion != "" {
 		tooltipContent := m.getTooltipContent(m.currentTooltipRegion)
 		if tooltipContent != "" {
-			// Position tooltip near mouse (simple implementation)
-			// For now, we'll add it as an overlay at bottom right
 			tooltipStyle := lipgloss.NewStyle().
 				Background(lipgloss.Color(ColorSteelGray)).
 				Foreground(lipgloss.Color(ColorMidnightBlack)).
@@ -271,8 +309,27 @@ func (m RootModel) View() string {
 				BorderForeground(lipgloss.Color(ColorIceBlue))
 			
 			tooltip := tooltipStyle.Render(tooltipContent)
-			// Simple placement - we could make this more sophisticated
-			return mainView + "\n" + tooltip
+			tooltipWidth := lipgloss.Width(tooltip)
+			
+			// Position tooltip horizontally near mouse cursor
+			// Try to align left edge with mouse X, but keep within terminal bounds
+			desiredX := m.mouseX
+			if desiredX + tooltipWidth > m.width {
+				// Shift left to keep tooltip on screen
+				desiredX = m.width - tooltipWidth
+			}
+			if desiredX < 0 {
+				desiredX = 0
+			}
+			
+			// Add spaces before tooltip to position it horizontally
+			spaces := ""
+			if desiredX > 0 {
+				spaces = strings.Repeat(" ", desiredX)
+			}
+			
+			// Add tooltip on new line after main view
+			return mainView + "\n" + spaces + tooltip
 		}
 	}
 
