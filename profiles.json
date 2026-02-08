@@ -1,1 +1,12 @@
-{}
+{
+  "theme": "lich-king",
+  "columnWidths": {
+    "gpu": 0.30,
+    "process": 0.40,
+    "cpu": 0.30
+  },
+  "refreshInterval": 1000,
+  "maxProcesses": 200,
+  "gpuHistoryLength": 100,
+  "showTooltips": true
+}
