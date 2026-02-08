@@ -5,6 +5,11 @@ APP_NAME="OmniTop"
 APP_DIR="AppDir"
 OUTPUT="OmniTop-x86_64.AppImage"
 
+# Ensure script is run from the project root
+if [ ! -f "go.mod" ]; then
+    echo "Error: Please run this script from the project root directory."
+fi
+
 # Build the binary first
 echo "Building OmniTop..."
 go build -o omnitop ./cmd/omnitop
@@ -16,12 +21,13 @@ rm -rf "$APP_DIR" "$OUTPUT"
 mkdir -p "$APP_DIR/usr/bin"
 mkdir -p "$APP_DIR/usr/share/icons/hicolor/256x256/apps"
 mkdir -p "$APP_DIR/usr/share/applications"
+mkdir -p "$APP_DIR/usr/share/metainfo"
 
 # Copy binary
 cp omnitop "$APP_DIR/usr/bin/"
 
-# Create desktop file
-cat <<DESKTOP > "$APP_DIR/usr/share/applications/$APP_NAME.desktop"
+# Create desktop file at root of AppDir (REQUIRED by AppImage spec) AND in /usr/share/applications
+cat <<DESKTOP > "$APP_DIR/$APP_NAME.desktop"
 [Desktop Entry]
 Name=$APP_NAME
 Exec=omnitop
@@ -30,9 +36,11 @@ Type=Application
 Categories=Utility;System;Monitor;
 Terminal=true
 DESKTOP
+cp "$APP_DIR/$APP_NAME.desktop" "$APP_DIR/usr/share/applications/"
 
-# Create icon (dummy for now, replace with actual icon if available)
-touch "$APP_DIR/usr/share/icons/hicolor/256x256/apps/omnitop.png"
+# Create icon at root of AppDir (REQUIRED by AppImage spec) AND in standard location
+touch "$APP_DIR/omnitop.png"
+cp "$APP_DIR/omnitop.png" "$APP_DIR/usr/share/icons/hicolor/256x256/apps/"
 
 # Create AppRun script
 cat <<APPRUN > "$APP_DIR/AppRun"
