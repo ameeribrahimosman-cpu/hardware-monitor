@@ -43,7 +43,7 @@ func (m FooterModel) View() string {
 	left := fmt.Sprintf("OmniTop | %s", time.Now().Format("15:04:05"))
 
 	// Right: Hotkeys
-	right := "q: Quit | Arrows: Select | [ ] { }: Resize"
+	right := "q: Quit | [/]: GPU | {/}: Process | Arrows: Nav"
 
 	// Spacer
 	spacerWidth := m.width - lipgloss.Width(left) - lipgloss.Width(right) - 2

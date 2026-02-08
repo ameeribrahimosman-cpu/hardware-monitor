@@ -11,6 +11,9 @@ import (
 
 type TickMsg time.Time
 
+// tickRand is used to add jitter to polling intervals.
+// Safe for use in this context as tick() is only called from
+// the single-threaded Bubble Tea event loop.
 var tickRand = rand.New(rand.NewSource(time.Now().UnixNano()))
 
 func tick() tea.Cmd {
