@@ -1,77 +1,61 @@
-// internal/config/config.go
 package config
 
 import (
 	"encoding/json"
+	"io/ioutil"
 	"os"
-	"path/filepath"
 )
 
-// LoadConfig loads and validates configuration from the specified JSON file.
-// If the file doesn't exist or fails to parse, returns default configuration.
+// DefaultConfig returns the hardcoded default configuration.
+func DefaultConfig() *ProfileConfiguration {
+	return &ProfileConfiguration{
+		Theme: "lich-king",
+		ColumnWidths: map[string]float64{
+			"gpu":     0.30,
+			"process": 0.40,
+			"cpu":     0.30,
+		},
+		RefreshInterval:  1000,
+		MaxProcesses:     200,
+		GPUHistoryLength: 100,
+		ShowTooltips:     true,
+		AlertThresholds: AlertThresholds{
+			CPUUsagePercent:    90.0,
+			CPUTempCelsius:     85.0,
+			GPUUsagePercent:    98.0,
+			GPUTempCelsius:     85.0,
+			MemoryUsagePercent: 95.0,
+			DiskUsagePercent:   90.0,
+		},
+	}
+}
+
+// LoadConfig reads the configuration from the specified path.
+// If the file does not exist or is invalid, it returns the default configuration.
 func LoadConfig(path string) (*ProfileConfiguration, error) {
+	// Start with defaults
+	cfg := DefaultConfig()
+
 	// Check if file exists
 	if _, err := os.Stat(path); os.IsNotExist(err) {
-		// File doesn't exist, return defaults
-		return DefaultConfig(), nil
+		// File doesn't exist, try to write defaults
+		data, err := json.MarshalIndent(cfg, "", "  ")
+		if err == nil {
+			_ = ioutil.WriteFile(path, data, 0644)
+		}
+		return cfg, nil
 	}
 
 	// Read file
-	data, err := os.ReadFile(path)
+	data, err := ioutil.ReadFile(path)
 	if err != nil {
-		return DefaultConfig(), err
+		return cfg, err
 	}
 
 	// Parse JSON
-	var config ProfileConfiguration
-	if err := json.Unmarshal(data, &config); err != nil {
-		return DefaultConfig(), err
+	if err := json.Unmarshal(data, cfg); err != nil {
+		return cfg, err
 	}
 
-	// Validate and normalize
-	if err := config.Validate(); err != nil {
-		return DefaultConfig(), err
-	}
-
-	return &config, nil
-}
-
-// LoadDefaultConfig loads configuration from default location "profiles.json"
-// in the current working directory.
-func LoadDefaultConfig() (*ProfileConfiguration, error) {
-	// Try current directory first
-	configPath := "profiles.json"
-	if _, err := os.Stat(configPath); err == nil {
-		return LoadConfig(configPath)
-	}
-
-	// Try config directory relative to executable
-	exePath, err := os.Executable()
-	if err == nil {
-		exeDir := filepath.Dir(exePath)
-		configPath = filepath.Join(exeDir, "profiles.json")
-		if _, err := os.Stat(configPath); err == nil {
-			return LoadConfig(configPath)
-		}
-	}
-
-	// No config file found, return defaults
-	return DefaultConfig(), nil
-}
-
-// SaveConfig writes configuration to the specified JSON file.
-func SaveConfig(config *ProfileConfiguration, path string) error {
-	// Validate before saving
-	if err := config.Validate(); err != nil {
-		return err
-	}
-
-	// Marshal with indentation
-	data, err := json.MarshalIndent(config, "", "  ")
-	if err != nil {
-		return err
-	}
-
-	// Write file
-	return os.WriteFile(path, data, 0644)
+	return cfg, nil
 }
