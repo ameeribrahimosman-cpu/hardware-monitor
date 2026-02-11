@@ -7,6 +7,7 @@ import (
 	"github.com/mindprince/gonvml"
 	"github.com/shirou/gopsutil/v3/cpu"
 	"github.com/shirou/gopsutil/v3/disk"
+	"github.com/shirou/gopsutil/v3/host"
 	"github.com/shirou/gopsutil/v3/mem"
 	"github.com/shirou/gopsutil/v3/net"
 	"github.com/shirou/gopsutil/v3/process"
@@ -15,6 +16,9 @@ import (
 type RealProvider struct {
 	hasGPU     bool
 	gpuHistory []float64
+	lastNet    NetStats
+	lastDisk   DiskStats
+	lastTime   time.Time
 }
 
 func (r *RealProvider) Init() error {
@@ -34,6 +38,10 @@ func (r *RealProvider) GetStats() (*SystemStats, error) {
 	stats := &SystemStats{
 		Timestamp: time.Now(),
 	}
+
+	// Uptime
+	uptime, _ := host.Uptime()
+	stats.Uptime = uptime
 
 	// CPU
 	cpuPercent, err := cpu.Percent(0, true)
@@ -83,6 +91,29 @@ func (r *RealProvider) GetStats() (*SystemStats, error) {
 		stats.Net.BytesRecv = netCounters[0].BytesRecv
 	}
 
+	// Calculate speeds
+	now := time.Now()
+	if !r.lastTime.IsZero() {
+		duration := now.Sub(r.lastTime).Seconds()
+		if duration > 0 {
+			if stats.Disk.ReadBytes >= r.lastDisk.ReadBytes {
+				stats.Disk.ReadSpeed = uint64(float64(stats.Disk.ReadBytes-r.lastDisk.ReadBytes) / duration)
+			}
+			if stats.Disk.WriteBytes >= r.lastDisk.WriteBytes {
+				stats.Disk.WriteSpeed = uint64(float64(stats.Disk.WriteBytes-r.lastDisk.WriteBytes) / duration)
+			}
+			if stats.Net.BytesSent >= r.lastNet.BytesSent {
+				stats.Net.UploadSpeed = uint64(float64(stats.Net.BytesSent-r.lastNet.BytesSent) / duration)
+			}
+			if stats.Net.BytesRecv >= r.lastNet.BytesRecv {
+				stats.Net.DownloadSpeed = uint64(float64(stats.Net.BytesRecv-r.lastNet.BytesRecv) / duration)
+			}
+		}
+	}
+	r.lastTime = now
+	r.lastDisk = stats.Disk
+	r.lastNet = stats.Net
+
 	// GPU (if available)
 	if r.hasGPU {
 		count, err := gonvml.DeviceCount()
@@ -104,7 +135,7 @@ func (r *RealProvider) GetStats() (*SystemStats, error) {
 				stats.GPU.FanSpeed = uint32(fan)
 				power, _ := dev.PowerUsage()
 				stats.GPU.PowerUsage = uint32(power)
-				
+
 				// Update GPU history
 				r.gpuHistory = append(r.gpuHistory, float64(util))
 				if len(r.gpuHistory) > 60 {
@@ -145,6 +176,19 @@ func (r *RealProvider) GetStats() (*SystemStats, error) {
 				Memory:     rss,
 			})
 			count++
+		}
+	}
+
+	// Resolve GPU Process Names from System Process List
+	if len(stats.GPU.Processes) > 0 {
+		pidMap := make(map[int32]string)
+		for _, p := range stats.Processes {
+			pidMap[p.PID] = p.Command
+		}
+		for i := range stats.GPU.Processes {
+			if name, ok := pidMap[int32(stats.GPU.Processes[i].PID)]; ok {
+				stats.GPU.Processes[i].Name = name
+			}
 		}
 	}
 

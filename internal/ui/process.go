@@ -2,19 +2,37 @@ package ui
 
 import (
 	"fmt"
+	"os"
 	"sort"
+	"strings"
+	"syscall"
 
 	"github.com/charmbracelet/bubbles/table"
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/google/omnitop/internal/metrics"
+	"github.com/shirou/gopsutil/v3/process"
+)
+
+type SortBy int
+
+const (
+	SortCPU SortBy = iota
+	SortMem
+	SortPID
 )
 
 type ProcessModel struct {
-	table  table.Model
-	width  int
-	height int
-	stats  []metrics.ProcessInfo
+	table     table.Model
+	width     int
+	height    int
+	stats     metrics.SystemStats
+	sortBy    SortBy
+	filter    string
+	filtering bool
+	textInput textinput.Model
+	Alert     bool
 }
 
 func NewProcessModel() ProcessModel {
@@ -36,41 +54,145 @@ func NewProcessModel() ProcessModel {
 	s.Header = s.Header.
 		Border(lipgloss.NormalBorder(), false, false, true, false).
 		BorderForeground(lipgloss.Color(ColorSteelGray)).
-		Bold(false)
+		Bold(true)
 	s.Selected = s.Selected.
 		Foreground(lipgloss.Color(ColorIceBlue)).
 		Background(lipgloss.Color(ColorSteelGray)).
 		Bold(false)
 	t.SetStyles(s)
 
+	ti := textinput.New()
+	ti.Placeholder = "Filter..."
+	ti.Prompt = "/"
+	ti.CharLimit = 30
+	ti.Width = 20
+
 	return ProcessModel{
-		table: t,
+		table:     t,
+		sortBy:    SortCPU,
+		textInput: ti,
 	}
 }
 
 func (m ProcessModel) Init() tea.Cmd {
-	return nil
+	return textinput.Blink
 }
 
 func (m ProcessModel) Update(msg tea.Msg) (ProcessModel, tea.Cmd) {
 	var cmd tea.Cmd
+
+	if m.filtering {
+		switch msg := msg.(type) {
+		case tea.KeyMsg:
+			switch msg.String() {
+			case "enter", "esc":
+				m.filtering = false
+				m.filter = m.textInput.Value()
+				m.table.Focus()
+				return m, nil
+			}
+		}
+		m.textInput, cmd = m.textInput.Update(msg)
+		m.filter = m.textInput.Value() // Live filter
+		// Re-apply filter immediately
+		m.SetStats(m.stats)
+		return m, cmd
+	}
+
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		switch msg.String() {
+		case "/":
+			m.filtering = true
+			m.textInput.Focus()
+			m.table.Blur()
+			return m, textinput.Blink
+		case "s":
+			m.sortBy = (m.sortBy + 1) % 3
+			// Re-sort
+			m.SetStats(m.stats)
+		case "k", "f9":
+			if len(m.table.SelectedRow()) > 0 {
+				pidStr := m.table.SelectedRow()[0]
+				var pid int
+				fmt.Sscanf(pidStr, "%d", &pid)
+				// Kill
+				p, err := os.FindProcess(pid)
+				if err == nil {
+					_ = p.Signal(syscall.SIGTERM) // or Kill
+				}
+			}
+		case "[": // Renice + (Lower priority, higher value)
+			if len(m.table.SelectedRow()) > 0 {
+				pidStr := m.table.SelectedRow()[0]
+				var pid int
+				fmt.Sscanf(pidStr, "%d", &pid)
+				proc, err := process.NewProcess(int32(pid))
+				if err == nil {
+					nice, err := proc.Nice()
+					if err == nil {
+						_ = syscall.Setpriority(syscall.PRIO_PROCESS, pid, int(nice+1))
+					}
+				}
+			}
+		case "]": // Renice - (Higher priority, lower value)
+			if len(m.table.SelectedRow()) > 0 {
+				pidStr := m.table.SelectedRow()[0]
+				var pid int
+				fmt.Sscanf(pidStr, "%d", &pid)
+				proc, err := process.NewProcess(int32(pid))
+				if err == nil {
+					nice, err := proc.Nice()
+					if err == nil {
+						_ = syscall.Setpriority(syscall.PRIO_PROCESS, pid, int(nice-1))
+					}
+				}
+			}
+		}
+	}
+
 	m.table, cmd = m.table.Update(msg)
 	return m, cmd
 }
 
-func (m *ProcessModel) SetStats(procs []metrics.ProcessInfo) {
-	// Create a copy to sort
-	sorted := make([]metrics.ProcessInfo, len(procs))
-	copy(sorted, procs)
+func (m *ProcessModel) SetStats(stats metrics.SystemStats) {
+	m.stats = stats
+	procs := stats.Processes
 
-	// Sort by CPU usage descending
-	sort.Slice(sorted, func(i, j int) bool {
-		return sorted[i].CPUPercent > sorted[j].CPUPercent
-	})
-	m.stats = sorted
+	// Filter
+	var filtered []metrics.ProcessInfo
+	if m.filter != "" {
+		lowerFilter := strings.ToLower(m.filter)
+		for _, p := range procs {
+			if strings.Contains(strings.ToLower(p.Command), lowerFilter) ||
+				strings.Contains(strings.ToLower(p.User), lowerFilter) ||
+				fmt.Sprintf("%d", p.PID) == lowerFilter {
+				filtered = append(filtered, p)
+			}
+		}
+	} else {
+		filtered = make([]metrics.ProcessInfo, len(procs))
+		copy(filtered, procs)
+	}
 
-	rows := make([]table.Row, len(sorted))
-	for i, p := range sorted {
+	// Sort
+	switch m.sortBy {
+	case SortCPU:
+		sort.Slice(filtered, func(i, j int) bool {
+			return filtered[i].CPUPercent > filtered[j].CPUPercent
+		})
+	case SortMem:
+		sort.Slice(filtered, func(i, j int) bool {
+			return filtered[i].MemPercent > filtered[j].MemPercent
+		})
+	case SortPID:
+		sort.Slice(filtered, func(i, j int) bool {
+			return filtered[i].PID < filtered[j].PID
+		})
+	}
+
+	rows := make([]table.Row, len(filtered))
+	for i, p := range filtered {
 		rows[i] = table.Row{
 			fmt.Sprintf("%d", p.PID),
 			p.User,
@@ -117,10 +239,75 @@ func (m ProcessModel) View() string {
 		return ""
 	}
 
-	style := PanelStyle.Copy().Width(m.width).Height(m.height)
+	style := PanelStyle
+	if m.Alert {
+		style = AlertPanelStyle
+	}
+	style = style.Copy().Width(m.width).Height(m.height)
+
+	title := "Processes"
+	if m.filtering {
+		title = m.textInput.View()
+	} else if m.filter != "" {
+		title = fmt.Sprintf("Filter: %s", m.filter)
+	}
+
+	sortStr := "CPU"
+	switch m.sortBy {
+	case SortMem:
+		sortStr = "MEM"
+	case SortPID:
+		sortStr = "PID"
+	}
+
+	header := lipgloss.JoinHorizontal(lipgloss.Left,
+		TitleStyle.Render(title),
+		lipgloss.PlaceHorizontal(m.width-lipgloss.Width(title)-lipgloss.Width(sortStr)-5, lipgloss.Right, " "),
+		MetricLabelStyle.Render(fmt.Sprintf("[%s]", sortStr)),
+	)
+
+	// Render Memory/Net/Disk bars at bottom
+	memBar := renderBar(int(m.stats.Memory.UsedPercent), 100, m.width-4, fmt.Sprintf("Mem %.1f%%", m.stats.Memory.UsedPercent))
+	swapBar := renderBar(int(m.stats.Memory.SwapPercent), 100, m.width-4, fmt.Sprintf("Swap %.1f%%", m.stats.Memory.SwapPercent))
+
+	// Net/Disk (simple bars for speed/activity)
+	// Use 100MB/s as arbitrary max for visualization for now
+	const maxIO = 100 * 1024 * 1024 // 100MB
+
+	// We need speed (bytes/sec) but stats.Net is Total Bytes.
+	// ProcessModel doesn't store previous stats to calc speed?
+	// metrics.SystemStats has DiskStats which has ReadSpeed/WriteSpeed?
+	// Let's check internal/metrics/types.go. Yes!
+
+	netDownBar := renderBar(int(m.stats.Net.DownloadSpeed), maxIO, m.width/2-2, fmt.Sprintf("Net ↓ %s/s", formatBytes(m.stats.Net.DownloadSpeed)))
+	netUpBar := renderBar(int(m.stats.Net.UploadSpeed), maxIO, m.width/2-2, fmt.Sprintf("Net ↑ %s/s", formatBytes(m.stats.Net.UploadSpeed)))
+
+	diskReadBar := renderBar(int(m.stats.Disk.ReadSpeed), maxIO, m.width/2-2, fmt.Sprintf("Disk R %s/s", formatBytes(m.stats.Disk.ReadSpeed)))
+	diskWriteBar := renderBar(int(m.stats.Disk.WriteSpeed), maxIO, m.width/2-2, fmt.Sprintf("Disk W %s/s", formatBytes(m.stats.Disk.WriteSpeed)))
+
+	ioRow1 := lipgloss.JoinHorizontal(lipgloss.Top, netDownBar, " ", netUpBar)
+	ioRow2 := lipgloss.JoinHorizontal(lipgloss.Top, diskReadBar, " ", diskWriteBar)
 
 	return style.Render(lipgloss.JoinVertical(lipgloss.Left,
-		TitleStyle.Render("Processes"),
+		header,
 		m.table.View(),
+		"\n",
+		memBar,
+		swapBar,
+		ioRow1,
+		ioRow2,
 	))
+}
+
+func formatBytes(bytes uint64) string {
+	const unit = 1024
+	if bytes < unit {
+		return fmt.Sprintf("%d B", bytes)
+	}
+	div, exp := int64(unit), 0
+	for n := bytes / unit; n >= unit; n /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %cB", float64(bytes)/float64(div), "KMGTPE"[exp])
 }

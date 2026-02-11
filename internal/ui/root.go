@@ -1,11 +1,14 @@
 package ui
 
 import (
+	"fmt"
 	"math/rand"
+	"os/exec"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/google/omnitop/internal/config"
 	"github.com/google/omnitop/internal/metrics"
 )
 
@@ -13,16 +16,21 @@ type TickMsg time.Time
 
 var tickRand = rand.New(rand.NewSource(time.Now().UnixNano()))
 
-func tick() tea.Cmd {
-	// Add jitter: 900-1100ms
+func tick(interval int) tea.Cmd {
+	// Add jitter
 	jitter := time.Duration(tickRand.Intn(200)-100) * time.Millisecond
-	return tea.Tick(time.Second+jitter, func(t time.Time) tea.Msg {
+	base := time.Duration(interval) * time.Millisecond
+	if base <= 0 {
+		base = time.Second
+	}
+	return tea.Tick(base+jitter, func(t time.Time) tea.Msg {
 		return TickMsg(t)
 	})
 }
 
 type RootModel struct {
 	provider metrics.Provider
+	config   *config.ProfileConfiguration
 
 	// Sub-models
 	gpu     GPUModel
@@ -39,22 +47,41 @@ type RootModel struct {
 	// Tooltip state
 	mouseX, mouseY int
 	showTooltip    bool
+	tooltipContent string
+	lastAlertTime  time.Time
 }
 
-func NewRootModel(provider metrics.Provider) RootModel {
+func NewRootModel(provider metrics.Provider, cfg *config.ProfileConfiguration) RootModel {
+	// Defaults if config is missing values
+	col1 := 0.30
+	col2 := 0.40
+	if cfg != nil {
+		if v, ok := cfg.ColumnWidths["gpu"]; ok {
+			col1 = v
+		}
+		if v, ok := cfg.ColumnWidths["process"]; ok {
+			col2 = v
+		}
+	}
+
 	return RootModel{
 		provider: provider,
+		config:   cfg,
 		gpu:      NewGPUModel(),
 		process:  NewProcessModel(),
 		cpu:      NewCPUModel(),
 		footer:   NewFooterModel(),
-		col1Pct:  0.30, // 30%
-		col2Pct:  0.40, // 40%
+		col1Pct:  col1,
+		col2Pct:  col2,
 	}
 }
 
 func (m RootModel) Init() tea.Cmd {
-	return tick()
+	interval := 1000
+	if m.config != nil {
+		interval = m.config.RefreshInterval
+	}
+	return tick(interval)
 }
 
 func (m RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -68,19 +95,27 @@ func (m RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		case "[": // Shrink Left Col
 			m.col1Pct -= 0.05
-			if m.col1Pct < 0.1 { m.col1Pct = 0.1 }
+			if m.col1Pct < 0.1 {
+				m.col1Pct = 0.1
+			}
 			m.resizeModules()
 		case "]": // Expand Left Col
 			m.col1Pct += 0.05
-			if m.col1Pct+m.col2Pct > 0.9 { m.col1Pct = 0.9 - m.col2Pct }
+			if m.col1Pct+m.col2Pct > 0.9 {
+				m.col1Pct = 0.9 - m.col2Pct
+			}
 			m.resizeModules()
 		case "{": // Shrink Middle Col (effectively expands Right)
 			m.col2Pct -= 0.05
-			if m.col2Pct < 0.1 { m.col2Pct = 0.1 }
+			if m.col2Pct < 0.1 {
+				m.col2Pct = 0.1
+			}
 			m.resizeModules()
 		case "}": // Expand Middle Col
 			m.col2Pct += 0.05
-			if m.col1Pct+m.col2Pct > 0.9 { m.col2Pct = 0.9 - m.col1Pct }
+			if m.col1Pct+m.col2Pct > 0.9 {
+				m.col2Pct = 0.9 - m.col1Pct
+			}
 			m.resizeModules()
 		}
 
@@ -98,16 +133,25 @@ func (m RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		stats, err := m.provider.GetStats()
 		if err == nil {
 			m.gpu.SetStats(stats.GPU)
-			m.process.SetStats(stats.Processes)
+			m.process.SetStats(*stats)
 			m.cpu.SetStats(*stats)
+			m.checkAlerts(stats)
 		}
 		// Continue tick
-		cmds = append(cmds, tick())
+		interval := 1000
+		if m.config != nil {
+			interval = m.config.RefreshInterval
+		}
+		cmds = append(cmds, tick(interval))
 
 	case tea.MouseMsg:
 		m.mouseX = msg.X
 		m.mouseY = msg.Y
-		// TODO: Hit testing for tooltips
+
+		// Tooltip Logic
+		if m.config != nil && m.config.ShowTooltips {
+			m.updateTooltip()
+		}
 
 		// Pass mouse to sub-models
 		m.process, cmd = m.process.Update(msg)
@@ -118,6 +162,67 @@ func (m RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// gpu and cpu currently have no internal update logic needing msgs
 
 	return m, tea.Batch(cmds...)
+}
+
+func (m *RootModel) checkAlerts(stats *metrics.SystemStats) {
+	if m.config == nil {
+		return
+	}
+
+	// Check CPU
+	cpuAlert := stats.CPU.GlobalUsagePercent > m.config.AlertThresholds.CPUUsagePercent
+	m.cpu.Alert = cpuAlert
+
+	// Check GPU
+	gpuAlert := stats.GPU.Available && (float64(stats.GPU.Utilization) > m.config.AlertThresholds.GPUUsagePercent || float64(stats.GPU.Temperature) > m.config.AlertThresholds.GPUTempCelsius)
+	m.gpu.Alert = gpuAlert
+
+	// Check Memory (in Process module)
+	memAlert := stats.Memory.UsedPercent > m.config.AlertThresholds.MemoryUsagePercent
+	m.process.Alert = memAlert
+
+	// Notify
+	if (cpuAlert || gpuAlert || memAlert) && time.Since(m.lastAlertTime) > 10*time.Second {
+		m.lastAlertTime = time.Now()
+		msg := "System Alert: "
+		if cpuAlert {
+			msg += fmt.Sprintf("CPU %.0f%% ", stats.CPU.GlobalUsagePercent)
+		}
+		if gpuAlert {
+			msg += fmt.Sprintf("GPU %d%% ", stats.GPU.Utilization)
+		}
+		if memAlert {
+			msg += fmt.Sprintf("Mem %.0f%% ", stats.Memory.UsedPercent)
+		}
+
+		// Run in background
+		go exec.Command("notify-send", "-u", "critical", "OmniTop Alert", msg).Run()
+	}
+}
+
+func (m *RootModel) updateTooltip() {
+	m.showTooltip = false
+	if m.width == 0 {
+		return
+	}
+
+	// Determine column
+	w1 := int(float64(m.width) * m.col1Pct)
+	w2 := int(float64(m.width) * m.col2Pct)
+
+	if m.mouseX < w1 {
+		// GPU
+		m.showTooltip = true
+		m.tooltipContent = "GPU Stats:\nUtilization of graphics core\nand VRAM usage."
+	} else if m.mouseX < w1+w2 {
+		// Process
+		m.showTooltip = true
+		m.tooltipContent = "Processes:\nList of active tasks.\nSort by CPU/MEM.\nKill: k, Renice: []"
+	} else {
+		// CPU
+		m.showTooltip = true
+		m.tooltipContent = "CPU Stats:\nPer-core usage bars.\nLoad Avg: 1/5/15m."
+	}
 }
 
 func (m *RootModel) resizeModules() {
@@ -132,7 +237,9 @@ func (m *RootModel) resizeModules() {
 
 	// Height available for columns (minus footer)
 	h := m.height - 1
-	if h < 1 { h = 1 }
+	if h < 1 {
+		h = 1
+	}
 
 	m.gpu.SetSize(w1, h)
 	m.process.SetSize(w2, h)
@@ -153,8 +260,30 @@ func (m RootModel) View() string {
 	)
 
 	// Add Footer
-	return lipgloss.JoinVertical(lipgloss.Left,
+	view := lipgloss.JoinVertical(lipgloss.Left,
 		cols,
 		m.footer.View(),
 	)
+
+	// Overlay Tooltip (in Footer)
+	if m.showTooltip && m.tooltipContent != "" {
+		// Re-rendering footer with tooltip content
+		m.footer.SetHelp(m.tooltipContent)
+	} else {
+		m.footer.SetHelp("")
+	}
+
+	// Re-render footer since we might have updated it (Wait, `View` is pure usually, but here I modify footer state?
+	// `SetHelp` on `m.footer` modifies `m`? `m` is value receiver in `View`.
+	// So `m.footer.SetHelp` modifies local copy of footer.
+	// Then `m.footer.View()` uses that local copy.
+	// This works!
+
+	// Re-join
+	view = lipgloss.JoinVertical(lipgloss.Left,
+		cols,
+		m.footer.View(),
+	)
+
+	return view
 }
