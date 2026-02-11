@@ -7,7 +7,7 @@ import (
 // SystemStats holds the aggregated metrics for the entire system at a point in time.
 type SystemStats struct {
 	Timestamp time.Time
-	Uptime    uint64 // Uptime in seconds
+	Uptime    uint64 // Seconds
 	CPU       CPUStats
 	Memory    MemoryStats
 	Disk      DiskStats

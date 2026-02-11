@@ -1,6 +1,11 @@
 package ui
 
-import "github.com/charmbracelet/lipgloss"
+import (
+	"fmt"
+	"strings"
+
+	"github.com/charmbracelet/lipgloss"
+)
 
 // Theme colors based on "Wrath of the Lich King" palette
 const (
@@ -21,6 +26,11 @@ var (
 	PanelStyle = lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(lipgloss.Color(ColorSteelGray)).
+			Padding(0, 1)
+
+	AlertPanelStyle = lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(lipgloss.Color(ColorBloodCrimson)).
 			Padding(0, 1)
 
 	// Text styles
@@ -49,3 +59,29 @@ var (
 	AlertBarStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color(ColorBloodCrimson))
 )
+
+// renderBar renders a simple progress bar
+func renderBar(value, max, width int, label string) string {
+	if width < 10 {
+		return label
+	}
+	barWidth := width - lipgloss.Width(label) - 2
+	if barWidth < 0 {
+		barWidth = 0
+	}
+
+	filled := int(float64(value) / float64(max) * float64(barWidth))
+	if filled > barWidth {
+		filled = barWidth
+	}
+	empty := barWidth - filled
+
+	bar := strings.Repeat("█", filled) + strings.Repeat("░", empty)
+
+	style := BarStyle
+	if value > 80 {
+		style = AlertBarStyle
+	}
+
+	return fmt.Sprintf("%s %s", label, style.Render(bar))
+}

@@ -33,7 +33,7 @@ func (m *MockProvider) GetStats() (*SystemStats, error) {
 	// Simulate metric updates with some randomness
 	now := time.Now()
 	m.lastStats.Timestamp = now
-	m.lastStats.Uptime++
+	m.lastStats.Uptime += 1
 
 	// CPU
 	m.lastStats.CPU.GlobalUsagePercent = 20 + rand.Float64()*10

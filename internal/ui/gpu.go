@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"math"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -10,10 +11,10 @@ import (
 )
 
 type GPUModel struct {
-	width         int
-	height        int
-	stats         metrics.GPUStats
-	showProcesses bool
+	width  int
+	height int
+	stats  metrics.GPUStats
+	Alert  bool
 }
 
 func NewGPUModel() GPUModel {
@@ -51,7 +52,11 @@ func (m GPUModel) View() string {
 		return ""
 	}
 
-	style := PanelStyle.Copy().Width(m.width).Height(m.height)
+	style := PanelStyle
+	if m.Alert {
+		style = AlertPanelStyle
+	}
+	style = style.Copy().Width(m.width).Height(m.height)
 
 	if !m.stats.Available {
 		content := lipgloss.Place(m.width-2, m.height-2, lipgloss.Center, lipgloss.Center, "GPU Unavailable\n(Run with --mock to see demo)")
@@ -61,46 +66,60 @@ func (m GPUModel) View() string {
 	// Header
 	header := TitleStyle.Render(fmt.Sprintf("GPU: %s", m.stats.Name))
 
-	// Telemetry Bars
-	// Calculate bar width dynamically
-	barWidth := m.width - 4
+	// Metrics Bars
+	// Calculate available width for bars
+	barLabelWidth := 20 // Approx width for labels
+	barWidth := m.width - 4 - barLabelWidth
 	if barWidth < 10 {
 		barWidth = 10
 	}
 
-	utilBar := renderBar(int(m.stats.Utilization), 100, barWidth, "Util")
+	utilBar := renderBar(int(m.stats.Utilization), 100, m.width-4, "Util")
 
 	memUtilPercent := int(m.stats.MemoryUtil)
 	if memUtilPercent == 0 && m.stats.MemoryTotal > 0 {
 		memUtilPercent = int(float64(m.stats.MemoryUsed) / float64(m.stats.MemoryTotal) * 100.0)
 	}
-	memBar := renderBar(memUtilPercent, 100, barWidth, fmt.Sprintf("VRAM %d/%d MB", m.stats.MemoryUsed/1024/1024, m.stats.MemoryTotal/1024/1024))
+	memBar := renderBar(memUtilPercent, 100, m.width-4, fmt.Sprintf("VRAM %d/%d MB", m.stats.MemoryUsed/1024/1024, m.stats.MemoryTotal/1024/1024))
 
-	tempBar := renderBar(int(m.stats.Temperature), 100, barWidth, fmt.Sprintf("Temp %d°C", m.stats.Temperature))
-	fanBar := renderBar(int(m.stats.FanSpeed), 100, barWidth, fmt.Sprintf("Fan %d%%", m.stats.FanSpeed))
+	tempBar := renderBar(int(m.stats.Temperature), 100, m.width-4, fmt.Sprintf("Temp %d°C", m.stats.Temperature))
+	fanBar := renderBar(int(m.stats.FanSpeed), 100, m.width-4, fmt.Sprintf("Fan %d%%", m.stats.FanSpeed))
 
-	powerVal := int(m.stats.PowerUsage / 1000) // mW -> W
-	powerLimit := int(m.stats.PowerLimit / 1000)
-	powerLabel := fmt.Sprintf("Pwr %dW", powerVal)
-	if powerLimit > 0 {
-		powerLabel += fmt.Sprintf("/%dW", powerLimit)
-	}
-	powerBar := renderBar(powerVal, powerLimit, barWidth, powerLabel)
+	// Power Bar
+	powerW := m.stats.PowerUsage / 1000
+	powerLimitW := m.stats.PowerLimit / 1000
+	if powerLimitW == 0 {
+		powerLimitW = 300
+	} // Default fallback if 0
+	powerPct := int(float64(powerW) / float64(powerLimitW) * 100)
+	powerBar := renderBar(powerPct, 100, m.width-4, fmt.Sprintf("Pwr %dW", powerW))
 
-	// Content selection (Graph vs Processes)
-	var mainContent string
-	availableHeight := m.height - 8 // Header + 5 bars + padding
-	if availableHeight < 5 {
-		availableHeight = 5
-	}
-
-	if m.showProcesses {
-		mainContent = m.renderProcessTable(availableHeight)
-	} else {
-		mainContent = m.renderGraph(availableHeight)
+	// Calculate space for graph vs process list
+	// We want roughly 50% for graph, remaining for processes if height allows
+	availHeight := m.height - 7 // Header + 5 bars + padding
+	if availHeight < 5 {
+		availHeight = 5 // Minimum fallback
 	}
 
-	footer := MetricLabelStyle.Render("Press 'g' to toggle View")
+	graphHeight := availHeight / 2
+	if graphHeight < 5 {
+		graphHeight = 5
+	}
+
+	// Process list gets remaining space
+	procHeight := availHeight - graphHeight - 2 // -2 for headers/padding
+	if procHeight < 0 {
+		procHeight = 0
+	}
+
+	// Render Graph
+	graph := m.renderGraph(graphHeight)
+
+	// Render Process List
+	procList := ""
+	if procHeight > 2 {
+		procList = m.renderProcessTable(procHeight)
+	}
 
 	// Combine
 	content := lipgloss.JoinVertical(lipgloss.Left,
@@ -111,40 +130,12 @@ func (m GPUModel) View() string {
 		fanBar,
 		powerBar,
 		"\n",
-		mainContent,
-		footer,
+		graph,
+		"\n",
+		procList,
 	)
 
 	return style.Render(content)
-}
-
-func renderBar(value, max, width int, label string) string {
-	if max <= 0 {
-		max = 100
-	} // Avoid divide by zero
-	if width < 10 {
-		return label
-	}
-	barWidth := width - lipgloss.Width(label) - 2
-	if barWidth < 0 {
-		barWidth = 0
-	}
-
-	ratio := float64(value) / float64(max)
-	if ratio > 1.0 {
-		ratio = 1.0
-	}
-	filled := int(ratio * float64(barWidth))
-	empty := barWidth - filled
-
-	bar := strings.Repeat("█", filled) + strings.Repeat("░", empty)
-
-	style := BarStyle
-	if ratio > 0.8 {
-		style = AlertBarStyle
-	}
-
-	return fmt.Sprintf("%s %s", label, style.Render(bar))
 }
 
 func (m GPUModel) renderGraph(height int) string {
@@ -169,34 +160,52 @@ func (m GPUModel) renderGraph(height int) string {
 	sb.WriteString(TitleStyle.Render("Utilization History"))
 	sb.WriteString("\n")
 
-	// Braille-like blocks:  ▂▃▄▅▆▇█
-	// blocks := []rune{' ', '▂', '▃', '▄', '▅', '▆', '▇', '█'}
-
-	// Single line graph for now to save space, repeated for height?
-	// Or multiple lines.
-	// Let's do a simple multi-line block graph.
+	// Symbols for graph:   ▂▃▄▅▆▇█
+	symbols := []rune{' ', ' ', '▂', '▃', '▄', '▅', '▆', '▇', '█'}
 
 	// Create grid
 	grid := make([][]rune, height)
 	for i := range grid {
-		grid[i] = make([]rune, maxPoints)
+		grid[i] = make([]rune, maxPoints) // Use maxPoints instead of len(data) to ensure full width
 		for j := range grid[i] {
 			grid[i][j] = ' '
 		}
 	}
 
-	for x, val := range window {
+	// Determine start index for data in the grid (right-aligned)
+	startIdx := maxPoints - len(data)
+
+	for x, val := range data {
+		// Calculate height relative to max 100
 		// val is 0-100
-		// Height is 'height'
-		// Calculate how many blocks high
-		h := int((val / 100.0) * float64(height))
-		if h > height {
-			h = height
+		// height is e.g. 10
+		// normalized height = val / 100 * height
+
+		normH := (val / 100.0) * float64(height)
+		fullBlocks := int(math.Floor(normH))
+		remainder := normH - float64(fullBlocks)
+
+		gridIdx := startIdx + x
+		if gridIdx >= maxPoints {
+			continue
 		}
 
-		// Fill from bottom
-		for y := 0; y < h; y++ {
-			grid[height-1-y][x] = '█'
+		// Draw full blocks from bottom
+		for y := 0; y < fullBlocks; y++ {
+			if height-1-y >= 0 {
+				grid[height-1-y][gridIdx] = '█'
+			}
+		}
+
+		// Draw partial block at top
+		if fullBlocks < height {
+			symIdx := int(remainder * 8)
+			if symIdx > 8 {
+				symIdx = 8
+			}
+			if symIdx > 0 {
+				grid[height-1-fullBlocks][gridIdx] = symbols[symIdx]
+			}
 		}
 		// Add a "cap" block if we want more precision, but full block is fine for MVP
 	}
@@ -230,6 +239,49 @@ func (m GPUModel) renderProcessTable(height int) string {
 		memStr := fmt.Sprintf("%dMiB", p.MemoryUsed/1024/1024)
 		sb.WriteString(fmt.Sprintf("%-8d %-15s %s\n", p.PID, memStr, p.Name))
 		count++
+	}
+
+	return sb.String()
+}
+
+func (m GPUModel) renderProcessTable(height int) string {
+	var sb strings.Builder
+	sb.WriteString(TitleStyle.Render("GPU Processes"))
+	sb.WriteString("\n")
+
+	// Filter GPU processes
+	// Assuming stats.Processes contains all system processes, we need to filter
+	// wait, stats.Processes is missing in GPUStats struct in types.go?
+	// Let's check types.go. Yes, GPUStats has `Processes []GPUProcess`.
+
+	if len(m.stats.Processes) == 0 {
+		sb.WriteString(MetricLabelStyle.Render("No GPU processes"))
+		return sb.String()
+	}
+
+	// Columns: PID, Name, VRAM
+	// PID (6), Name (15), VRAM (10)
+	header := fmt.Sprintf("%-6s %-15s %-10s", "PID", "Name", "VRAM")
+	sb.WriteString(MetricLabelStyle.Render(header) + "\n")
+
+	remainingHeight := height - 2 // Header + Title
+	if remainingHeight < 0 {
+		remainingHeight = 0
+	}
+
+	for i, p := range m.stats.Processes {
+		if i >= remainingHeight {
+			break
+		}
+
+		vramStr := fmt.Sprintf("%d MB", p.MemoryUsed/1024/1024)
+		name := p.Name
+		if len(name) > 15 {
+			name = name[:12] + "..."
+		}
+
+		line := fmt.Sprintf("%-6d %-15s %-10s", p.PID, name, vramStr)
+		sb.WriteString(MetricValueStyle.Render(line) + "\n")
 	}
 
 	return sb.String()

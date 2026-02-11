@@ -28,7 +28,7 @@ mkdir -p "$APP_DIR/usr/share/metainfo"
 cp omnitop "$APP_DIR/usr/bin/"
 
 # Create desktop file at root of AppDir (REQUIRED by AppImage spec) AND in /usr/share/applications
-cat <<EOF > "$APP_DIR/$APP_NAME.desktop"
+cat <<DESKTOP > "$APP_DIR/$APP_NAME.desktop"
 [Desktop Entry]
 Name=$APP_NAME
 Exec=omnitop

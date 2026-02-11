@@ -19,9 +19,9 @@ func main() {
 	flag.Parse()
 
 	// Load configuration
-	cfg, err := config.LoadConfig(*configPath)
+	cfg, err := config.LoadConfig("profiles.json")
 	if err != nil {
-		log.Printf("Warning: Failed to load config from %s: %v. Using defaults.", *configPath, err)
+		log.Printf("Warning: Failed to load profiles.json: %v. Using defaults.", err)
 		cfg = config.DefaultConfig()
 	}
 
@@ -40,7 +40,7 @@ func main() {
 	}
 	defer provider.Shutdown()
 
-	// Create root model with config
+	// Create root model
 	root := ui.NewRootModel(provider, cfg)
 
 	// Start Bubble Tea program

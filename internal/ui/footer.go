@@ -10,8 +10,8 @@ import (
 )
 
 type FooterModel struct {
-	width  int
-	uptime uint64
+	width int
+	help  string
 }
 
 func NewFooterModel() FooterModel {
@@ -30,8 +30,8 @@ func (m *FooterModel) SetSize(w int) {
 	m.width = w
 }
 
-func (m *FooterModel) SetStats(stats *metrics.SystemStats) {
-	m.uptime = stats.Uptime
+func (m *FooterModel) SetHelp(h string) {
+	m.help = h
 }
 
 func (m FooterModel) View() string {
@@ -45,18 +45,29 @@ func (m FooterModel) View() string {
 		Foreground(lipgloss.Color(ColorMidnightBlack)).
 		Padding(0, 1)
 
-	// Format uptime
-	d := time.Duration(m.uptime) * time.Second
-	uptimeStr := fmt.Sprintf("%dh %dm", int(d.Hours()), int(d.Minutes())%60)
+	// If help is set (tooltip), show it prominently
+	if m.help != "" {
+		// Tooltip might be multi-line, but footer is usually single line.
+		// We'll just take the first line or join them with spaces.
+		// Actually, prompt says "explain each metric".
+		// We can render a multi-line footer if needed, but height is calculated in resizeModules.
+		// resizeModules sets height: `h := m.height - 1`.
+		// So footer is 1 line effectively? Wait, `View` logic in RootModel:
+		// `lipgloss.JoinVertical(lipgloss.Left, cols, m.footer.View())`
+		// If footer is multiple lines, `cols` height needs to shrink.
+		// For MVP, keep footer single line and replace content.
+		content := fmt.Sprintf("INFO: %s", m.help)
+		return style.Render(content)
+	}
 
-	// Left: Hostname/Uptime
-	left := fmt.Sprintf("OmniTop | Uptime: %s | %s", uptimeStr, time.Now().Format("15:04:05"))
+	// Left: Hostname/Uptime (Mocked for now or use os)
+	left := fmt.Sprintf("OmniTop | %s", time.Now().Format("15:04:05"))
 
 	// Right: Hotkeys
-	right := "q: Quit | Arrows: Select | [ ] { }: Resize"
+	right := "q: Quit | Arrows: Select | [ ] { }: Resize | /: Filter | k: Kill"
 
 	// Spacer
-	spacerWidth := m.width - lipgloss.Width(left) - lipgloss.Width(right) - 2
+	spacerWidth := m.width - lipgloss.Width(left) - lipgloss.Width(right) - 4
 	if spacerWidth < 0 {
 		spacerWidth = 0
 	}

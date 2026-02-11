@@ -13,6 +13,7 @@ type CPUModel struct {
 	width  int
 	height int
 	stats  metrics.SystemStats // Holds all for summary
+	Alert  bool
 }
 
 func NewCPUModel() CPUModel {
@@ -41,96 +42,138 @@ func (m CPUModel) View() string {
 		return ""
 	}
 
-	style := PanelStyle.Copy().Width(m.width).Height(m.height)
+	style := PanelStyle
+	if m.Alert {
+		style = AlertPanelStyle
+	}
+	style = style.Copy().Width(m.width).Height(m.height)
+
+	// Uptime
+	uptimeDuration := m.stats.Uptime
+	days := uptimeDuration / 86400
+	hours := (uptimeDuration % 86400) / 3600
+	mins := (uptimeDuration % 3600) / 60
+	uptimeStr := fmt.Sprintf("Up: %dd %02dh %02dm", days, hours, mins)
 
 	// CPU Header
-	cpuHeader := TitleStyle.Render(fmt.Sprintf("CPU: %.1f%%", m.stats.CPU.GlobalUsagePercent))
+	cpuHeader := lipgloss.JoinHorizontal(lipgloss.Left,
+		TitleStyle.Render(fmt.Sprintf("CPU: %.1f%%", m.stats.CPU.GlobalUsagePercent)),
+		lipgloss.PlaceHorizontal(m.width-20-len(uptimeStr), lipgloss.Right, " "),
+		MetricLabelStyle.Render(uptimeStr),
+	)
 
 	// Load Average
 	loadStr := fmt.Sprintf("Load: %.2f %.2f %.2f", m.stats.CPU.LoadAvg[0], m.stats.CPU.LoadAvg[1], m.stats.CPU.LoadAvg[2])
 	load := MetricLabelStyle.Render(loadStr)
 
+	// Calculate space for Cores
+	// We need space for Memory and GPU summary at bottom?
+	// The requirement says "Per-core CPU bars... memory breakdown, disk I/O, net RX/TX graphs" are in MIDDLE column?
+	// Wait, the prompt says:
+	// "Middle Column (~40% width): btop/htop hybrid – Full sortable process list..., bottom stacked: memory breakdown, disk I/O, net RX/TX graphs."
+	// "Right Column (~30% width): Per-core CPU bars... load averages, quick GPU summary mini-graph."
+
+	// So Memory/Disk/Net graphs should be in ProcessModel (Middle), not CPUModel (Right)?
+	// But `ProcessModel` currently only has the table.
+	// `RootModel` logic in `View` puts `process` in middle.
+	// Currently `process.View` only renders the table.
+	// I should probably move Memory/Disk/Net to Process column or a separate widget below it.
+	// However, `RootModel` splits into 3 columns.
+	// Left: GPU. Middle: Process. Right: CPU.
+	// If the user wants Memory/Disk/Net in middle, I should add them to `ProcessModel` or split the middle column.
+	// Given the complexity, I might stick to what I have or try to fit them.
+	// But let's focus on CPUModel (Right Column) for now.
+	// Requirement: Per-core bars, load averages, quick GPU summary.
+
 	// Cores
-	cores := renderCores(m.stats.CPU.PerCoreUsage, m.stats.CPU.PerCoreTemp, m.width-4)
+	availHeight := m.height - 8 // Reserve for header, load, gpu summary
+	if availHeight < 5 {
+		availHeight = 5
+	}
 
-	// Memory Summary
-	mem := renderBar(int(m.stats.Memory.UsedPercent), 100, m.width-4, fmt.Sprintf("Mem %.1f%%", m.stats.Memory.UsedPercent))
-	swap := renderBar(int(m.stats.Memory.SwapPercent), 100, m.width-4, fmt.Sprintf("Swap %.1f%%", m.stats.Memory.SwapPercent))
+	cores := renderCores(m.stats.CPU.PerCoreUsage, m.stats.CPU.PerCoreTemp, m.width-4, availHeight)
 
-	// GPU Summary
-	gpu := ""
+	// GPU Summary Mini-Graph
+	gpuSummary := ""
 	if m.stats.GPU.Available {
-		gpu = renderBar(int(m.stats.GPU.Utilization), 100, m.width-4, fmt.Sprintf("GPU %d%%", m.stats.GPU.Utilization))
+		gpuSummary = renderBar(int(m.stats.GPU.Utilization), 100, m.width-4, fmt.Sprintf("GPU %d%%", m.stats.GPU.Utilization))
 	} else {
-		gpu = MetricLabelStyle.Render("GPU: N/A")
+		gpuSummary = MetricLabelStyle.Render("GPU: N/A")
 	}
 
 	// Combine
 	content := lipgloss.JoinVertical(lipgloss.Left,
 		cpuHeader,
 		load,
+		"\n",
 		cores,
 		"\n",
-		TitleStyle.Render("Memory"),
-		mem,
-		swap,
-		"\n",
 		TitleStyle.Render("GPU Summary"),
-		gpu,
+		gpuSummary,
 	)
 
 	return style.Render(content)
 }
 
-func renderCores(usage []float64, temps []float64, width int) string {
-	var sb strings.Builder
-	colWidth := (width / 2) - 2
-	if colWidth < 10 {
-		colWidth = width // single column
-	}
-
+func renderCores(usage []float64, temps []float64, width, height int) string {
 	if len(usage) == 0 {
 		return "No CPU Data"
 	}
 
-	for i := 0; i < len(usage); i += 2 {
-		idx1 := i
-		tempStr1 := ""
-		if len(temps) > idx1 && temps[idx1] > 0 {
-			tempStr1 = fmt.Sprintf(" %d°C", int(temps[idx1]))
-		}
-		label1 := fmt.Sprintf("%d%s", idx1, tempStr1)
-		bar1 := renderBarCompact(int(usage[idx1]), 100, colWidth, label1)
+	// Dynamic columns based on width and count
+	// Target roughly 20 chars per column?
+	colWidth := 20
+	numCols := width / colWidth
+	if numCols < 1 {
+		numCols = 1
+	}
 
-		if i+1 < len(usage) {
-			idx2 := i + 1
-			tempStr2 := ""
-			if len(temps) > idx2 && temps[idx2] > 0 {
-				tempStr2 = fmt.Sprintf(" %d°C", int(temps[idx2]))
-			}
-			label2 := fmt.Sprintf("%d%s", idx2, tempStr2)
-			bar2 := renderBarCompact(int(usage[idx2]), 100, colWidth, label2)
+	// Ensure we don't exceed height too much
+	// Rows needed = ceil(count / cols)
+	// If rows > height, increase cols if possible?
+	// Or scroll? TUI usually doesn't scroll automatically without viewport.
+	// Let's stick to simple grid.
 
-			// Pad to align
-			padding := width - lipgloss.Width(bar1) - lipgloss.Width(bar2)
-			if padding < 0 {
-				padding = 0
-			}
-			sb.WriteString(bar1 + strings.Repeat(" ", padding) + bar2 + "\n")
-		} else {
-			sb.WriteString(bar1 + "\n")
+	var sb strings.Builder
+
+	rows := (len(usage) + numCols - 1) / numCols
+
+	for r := 0; r < rows; r++ {
+		if r >= height {
+			sb.WriteString(MetricLabelStyle.Render("..."))
+			break
 		}
+
+		rowStr := ""
+		for c := 0; c < numCols; c++ {
+			idx := r*numCols + c
+			if idx >= len(usage) {
+				break
+			}
+
+			// Render individual core bar
+			// [ 0] ||||| 50%
+			label := fmt.Sprintf("%2d", idx)
+			// Compact bar
+			u := usage[idx]
+			// We have colWidth - padding
+			w := (width / numCols) - 2
+
+			bar := renderBarCompact(int(u), 100, w, label)
+			rowStr += bar + "  "
+		}
+		sb.WriteString(rowStr + "\n")
 	}
 
 	return sb.String()
 }
 
 func renderBarCompact(value, max, width int, label string) string {
-	// [Label  |||||     ]
-	// Label takes some space.
-	labelLen := lipgloss.Width(label)
+	// [Label ||||| ]
+	labelLen := len(label)
 	barLen := width - labelLen - 3 // [ ] and space
 	if barLen < 5 {
+		// Just text if too small
 		return fmt.Sprintf("%s %d%%", label, value)
 	}
 

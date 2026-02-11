@@ -1,19 +1,21 @@
 # OmniTop - The Unified System Monitor
 
-OmniTop merges the best features of `nvtop` (GPU history), `htop` (process management), and `btop` (visual density) into a single, cohesive TUI dashboard. Inspired by the "Wrath of the Lich King" aesthetic, it provides high-density system metrics with a focus on GPU telemetry, process management, and per-core CPU visualization.
+OmniTop is a production-ready Terminal User Interface (TUI) system monitoring tool that merges the best features of `nvtop` (GPU focus), `htop` (process management), and `btop` (visual density) into a single, cohesive dashboard. It is written in Go using the Bubble Tea framework.
+
+![OmniTop Screenshot](omnitop.png)
 
 ## Features
 
-- **Unified Dashboard**: 3-column layout replicating your multi-window workflow.
-  - **Left (GPU)**: Large historical utilization graph, VRAM/Fan/Power/Temp bars, and GPU process list.
-  - **Middle (Process)**: Interactive process list with sorting (CPU/MEM/PID), kill/signal capabilities.
-  - **Right (CPU)**: Per-core usage bars (compact 2-column view), load averages, memory/swap breakdown.
-- **Visuals**: "Wrath of the Lich King" theme (Midnight Black, Ice Blue, Steel Gray, Blood Crimson).
-- **Interactivity**:
-  - Mouse support for selection and resizing.
-  - Tooltips explaining metrics on hover (displayed in footer).
-  - Configurable column widths (saved to `profiles.json`).
-- **Alerting**: Visual and desktop notifications (`notify-send`) for high CPU/GPU/Memory usage or temperature.
+-   **Unified Dashboard**: 3-column layout replicating a power-user workflow.
+    -   **Left**: GPU History & Telemetry (NVTop style). Detailed utilization graph, VRAM/Temp/Fan/Power bars, and GPU process list.
+    -   **Middle**: Process list (HTop style). Sortable, filterable, with kill/renice capabilities. Bottom stacked Memory/Swap/Net/Disk summary.
+    -   **Right**: Per-core CPU bars (BTop style) with Load Averages and Uptime.
+-   **GPU First**: Native NVIDIA GPU monitoring via NVML (temps, fans, clocks, power).
+-   **Lich King Theme**: Midnight Black, Ice Blue, and Blood Crimson aesthetics.
+-   **Alerting**: Visual and desktop notifications when thresholds are exceeded (CPU > 90%, GPU > 98%, Temp > 85°C).
+-   **Educational Tooltips**: Mouse-over columns to see explanations of metrics in the footer.
+-   **Mock Mode**: Run without hardware sensors for testing/demo purposes.
+-   **Configurable**: Profiles saved to `profiles.json`.
 
 ## Installation
 
@@ -24,14 +26,14 @@ Requirements: Go 1.24+
 ```bash
 git clone https://github.com/google/omnitop.git
 cd omnitop
-go build -o omnitop ./cmd/omnitop
+go build -o omnitop cmd/omnitop/main.go
 ```
 
 ### Running
 
 ```bash
-# Run with real sensors (requires NVIDIA GPU for GPU metrics, root for some process details)
-sudo ./omnitop
+# Run with real sensors (requires NVIDIA GPU for full GPU metrics)
+./omnitop
 
 # Run in Mock Mode (simulated data for testing/demo)
 ./omnitop --mock
@@ -41,34 +43,40 @@ sudo ./omnitop
 
 | Key | Action |
 |---|---|
-| `q` / `Ctrl+C` | Quit (Saves layout) |
-| `[` | Shrink Left Column (GPU) |
-| `]` | Expand Left Column (GPU) |
-| `{` | Shrink Middle Column (Process) |
-| `}` | Expand Middle Column (Process) |
-| `g` | Toggle GPU Process List / History Graph (Left Panel) |
-| `c` | Sort Processes by CPU% (Middle Panel) |
-| `m` | Sort Processes by Memory% (Middle Panel) |
-| `p` | Sort Processes by PID (Middle Panel) |
-| `k` | Kill selected process (Middle Panel) |
-| `t` | Toggle Tooltips |
+| `q` / `Ctrl+C` | Quit |
+| `[` / `]` | Resize Left Column (GPU) |
+| `{` / `}` | Resize Middle Column (Process) |
+| `/` | Filter Processes (Type name/user/PID) |
+| `s` | Cycle Sort Order (CPU -> MEM -> PID) |
+| `k` / `F9` | Kill Selected Process (SIGTERM) |
 | `Up` / `Down` | Navigate Process List |
-| `Mouse` | Click to select, hover for tooltips |
+| `Enter` / `Esc`| Confirm / Cancel Filter |
 
 ## Configuration
 
-Configuration is saved in `profiles.json` in the working directory. It is automatically created/updated on exit.
+Configuration is stored in `profiles.json` in the current directory. It is automatically created on first run if missing.
 
+Example `profiles.json`:
 ```json
 {
   "theme": "lich-king",
   "column_widths": {
-    "gpu": 0.30,
-    "process": 0.40,
-    "cpu": 0.30
+    "gpu": 0.3,
+    "process": 0.4,
+    "cpu": 0.3
   },
   "refresh_interval": 1000,
-  "show_tooltips": true
+  "max_processes": 200,
+  "gpu_history_length": 100,
+  "show_tooltips": true,
+  "alert_thresholds": {
+    "cpu_usage_percent": 90,
+    "cpu_temp_celsius": 85,
+    "gpu_usage_percent": 98,
+    "gpu_temp_celsius": 85,
+    "memory_usage_percent": 95,
+    "disk_usage_percent": 90
+  }
 }
 ```
 
@@ -76,12 +84,19 @@ Configuration is saved in `profiles.json` in the working directory. It is automa
 
 To create a portable AppImage (requires `wget`):
 
-```bash
-./build_appimage.sh
-```
+1.  Ensure `appimagetool` is installed or let the script download it.
+2.  Run the build script:
+    ```bash
+    ./build_appimage.sh
+    ```
 
-## Troubleshooting
+## Architecture
 
-- **No GPU Data**: Ensure `nvidia-smi` works and NVML library is accessible. Run with `sudo` if needed.
-- **Missing Metrics**: Some process metrics require root privileges.
-- **Rendering Issues**: Ensure your terminal supports true color and UTF-8 (for block characters).
+-   **cmd/omnitop**: Entry point.
+-   **internal/metrics**: Data collection (Real via gopsutil/gonvml, Mock).
+-   **internal/ui**: Bubble Tea models for UI (GPU, CPU, Process, Footer).
+-   **internal/config**: Configuration management.
+
+## License
+
+Apache 2.0
