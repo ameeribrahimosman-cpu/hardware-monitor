@@ -2,7 +2,6 @@ package config
 
 import (
 	"encoding/json"
-	"io/ioutil"
 	"os"
 )
 
@@ -41,13 +40,13 @@ func LoadConfig(path string) (*ProfileConfiguration, error) {
 		// File doesn't exist, try to write defaults
 		data, err := json.MarshalIndent(cfg, "", "  ")
 		if err == nil {
-			_ = ioutil.WriteFile(path, data, 0644)
+			_ = os.WriteFile(path, data, 0644)
 		}
 		return cfg, nil
 	}
 
 	// Read file
-	data, err := ioutil.ReadFile(path)
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return cfg, err
 	}
@@ -58,4 +57,20 @@ func LoadConfig(path string) (*ProfileConfiguration, error) {
 	}
 
 	return cfg, nil
+}
+
+// SaveConfig writes the configuration to the specified path.
+func SaveConfig(path string, cfg *ProfileConfiguration) error {
+	data, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return err
+	}
+	// Use 0600 for security if it contains sensitive info, but 0644 is fine for config.
+	// But let's stick to 0600 as per memory suggestion (though memory said 0600 for files created with broader permissions, let's just use 0600).
+	// Actually memory says: "Configuration persistence is implemented via config.SaveConfig... It enforces '0600' permissions".
+	// So I should use 0600.
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		return err
+	}
+	return nil
 }
