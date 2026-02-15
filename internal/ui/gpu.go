@@ -11,10 +11,11 @@ import (
 )
 
 type GPUModel struct {
-	width  int
-	height int
-	stats  metrics.GPUStats
-	Alert  bool
+	width         int
+	height        int
+	stats         metrics.GPUStats
+	showProcesses bool
+	Alert         bool
 }
 
 func NewGPUModel() GPUModel {
@@ -213,32 +214,6 @@ func (m GPUModel) renderGraph(height int) string {
 	for _, row := range grid {
 		// Trim right side if strictly needed, but maxPoints handles it
 		sb.WriteString(BarStyle.Render(string(row)) + "\n")
-	}
-
-	return sb.String()
-}
-
-func (m GPUModel) renderProcessTable(height int) string {
-	var sb strings.Builder
-	sb.WriteString(TitleStyle.Render("GPU Processes"))
-	sb.WriteString("\n")
-
-	if len(m.stats.Processes) == 0 {
-		sb.WriteString("No GPU processes found.")
-		return sb.String()
-	}
-
-	// Header
-	sb.WriteString(fmt.Sprintf("%-8s %-15s %s\n", "PID", "Mem", "Name"))
-
-	count := 0
-	for _, p := range m.stats.Processes {
-		if count >= height-2 {
-			break
-		}
-		memStr := fmt.Sprintf("%dMiB", p.MemoryUsed/1024/1024)
-		sb.WriteString(fmt.Sprintf("%-8d %-15s %s\n", p.PID, memStr, p.Name))
-		count++
 	}
 
 	return sb.String()

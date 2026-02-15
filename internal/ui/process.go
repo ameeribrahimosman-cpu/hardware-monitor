@@ -287,8 +287,6 @@ func (m ProcessModel) View() string {
 	ioRow1 := lipgloss.JoinHorizontal(lipgloss.Top, netDownBar, " ", netUpBar)
 	ioRow2 := lipgloss.JoinHorizontal(lipgloss.Top, diskReadBar, " ", diskWriteBar)
 
-	headerText := fmt.Sprintf("Processes (Sort: %s) [c:CPU m:MEM p:PID k:Kill]", strings.ToUpper(m.sortBy))
-
 	return style.Render(lipgloss.JoinVertical(lipgloss.Left,
 		header,
 		m.table.View(),

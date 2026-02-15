@@ -8,6 +8,7 @@ import (
 	"github.com/shirou/gopsutil/v3/cpu"
 	"github.com/shirou/gopsutil/v3/disk"
 	"github.com/shirou/gopsutil/v3/host"
+	"github.com/shirou/gopsutil/v3/load"
 	"github.com/shirou/gopsutil/v3/mem"
 	"github.com/shirou/gopsutil/v3/net"
 	"github.com/shirou/gopsutil/v3/process"
@@ -19,6 +20,7 @@ type RealProvider struct {
 	lastNet    NetStats
 	lastDisk   DiskStats
 	lastTime   time.Time
+	procCache  map[int32]*process.Process
 }
 
 func (r *RealProvider) Init() error {
@@ -38,10 +40,6 @@ func (r *RealProvider) Init() error {
 
 func (r *RealProvider) GetStats() (*SystemStats, error) {
 	now := time.Now()
-	duration := now.Sub(r.lastTime).Seconds()
-	if duration < 0.1 {
-		duration = 0.1 // Prevent division by zero
-	}
 
 	stats := &SystemStats{
 		Timestamp: now,
@@ -51,10 +49,6 @@ func (r *RealProvider) GetStats() (*SystemStats, error) {
 	if uptime, err := host.Uptime(); err == nil {
 		stats.Uptime = uptime
 	}
-
-	// Uptime
-	uptime, _ := host.Uptime()
-	stats.Uptime = uptime
 
 	// CPU
 	cpuPercent, err := cpu.Percent(0, true)
@@ -98,15 +92,6 @@ func (r *RealProvider) GetStats() (*SystemStats, error) {
 		}
 	}
 
-	// Calculate Disk Speed
-	if r.lastDiskRead > 0 {
-		stats.Disk.ReadSpeed = uint64(float64(stats.Disk.ReadBytes-r.lastDiskRead) / duration)
-		stats.Disk.WriteSpeed = uint64(float64(stats.Disk.WriteBytes-r.lastDiskWrite) / duration)
-	}
-	r.lastDiskRead = stats.Disk.ReadBytes
-	r.lastDiskWrite = stats.Disk.WriteBytes
-
-
 	// Network
 	netCounters, err := net.IOCounters(false)
 	if err == nil && len(netCounters) > 0 {
@@ -115,7 +100,6 @@ func (r *RealProvider) GetStats() (*SystemStats, error) {
 	}
 
 	// Calculate speeds
-	now := time.Now()
 	if !r.lastTime.IsZero() {
 		duration := now.Sub(r.lastTime).Seconds()
 		if duration > 0 {
