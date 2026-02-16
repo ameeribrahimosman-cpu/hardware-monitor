@@ -10,10 +10,11 @@ import (
 )
 
 type CPUModel struct {
-	width  int
-	height int
-	stats  metrics.SystemStats // Holds all for summary
-	Alert  bool
+	width        int
+	height       int
+	stats        metrics.SystemStats // Holds all for summary
+	Alert        bool
+	highlightPID int
 }
 
 func NewCPUModel() CPUModel {
@@ -35,6 +36,10 @@ func (m *CPUModel) SetStats(stats metrics.SystemStats) {
 func (m *CPUModel) SetSize(w, h int) {
 	m.width = w
 	m.height = h
+}
+
+func (m *CPUModel) SetHighlight(pid int) {
+	m.highlightPID = pid
 }
 
 func (m CPUModel) View() string {
@@ -65,25 +70,6 @@ func (m CPUModel) View() string {
 	// Load Average
 	loadStr := fmt.Sprintf("Load: %.2f %.2f %.2f", m.stats.CPU.LoadAvg[0], m.stats.CPU.LoadAvg[1], m.stats.CPU.LoadAvg[2])
 	load := MetricLabelStyle.Render(loadStr)
-
-	// Calculate space for Cores
-	// We need space for Memory and GPU summary at bottom?
-	// The requirement says "Per-core CPU bars... memory breakdown, disk I/O, net RX/TX graphs" are in MIDDLE column?
-	// Wait, the prompt says:
-	// "Middle Column (~40% width): btop/htop hybrid – Full sortable process list..., bottom stacked: memory breakdown, disk I/O, net RX/TX graphs."
-	// "Right Column (~30% width): Per-core CPU bars... load averages, quick GPU summary mini-graph."
-
-	// So Memory/Disk/Net graphs should be in ProcessModel (Middle), not CPUModel (Right)?
-	// But `ProcessModel` currently only has the table.
-	// `RootModel` logic in `View` puts `process` in middle.
-	// Currently `process.View` only renders the table.
-	// I should probably move Memory/Disk/Net to Process column or a separate widget below it.
-	// However, `RootModel` splits into 3 columns.
-	// Left: GPU. Middle: Process. Right: CPU.
-	// If the user wants Memory/Disk/Net in middle, I should add them to `ProcessModel` or split the middle column.
-	// Given the complexity, I might stick to what I have or try to fit them.
-	// But let's focus on CPUModel (Right Column) for now.
-	// Requirement: Per-core bars, load averages, quick GPU summary.
 
 	// Cores
 	availHeight := m.height - 8 // Reserve for header, load, gpu summary
@@ -121,18 +107,11 @@ func renderCores(usage []float64, temps []float64, width, height int) string {
 	}
 
 	// Dynamic columns based on width and count
-	// Target roughly 20 chars per column?
 	colWidth := 20
 	numCols := width / colWidth
 	if numCols < 1 {
 		numCols = 1
 	}
-
-	// Ensure we don't exceed height too much
-	// Rows needed = ceil(count / cols)
-	// If rows > height, increase cols if possible?
-	// Or scroll? TUI usually doesn't scroll automatically without viewport.
-	// Let's stick to simple grid.
 
 	var sb strings.Builder
 
@@ -158,6 +137,9 @@ func renderCores(usage []float64, temps []float64, width, height int) string {
 			u := usage[idx]
 			// We have colWidth - padding
 			w := (width / numCols) - 2
+			if w < 5 {
+				w = 5
+			}
 
 			bar := renderBarCompact(int(u), 100, w, label)
 			rowStr += bar + "  "

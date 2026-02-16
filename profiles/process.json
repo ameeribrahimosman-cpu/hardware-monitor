@@ -1,0 +1,20 @@
+{
+  "theme": "lich-king",
+  "column_widths": {
+    "gpu": 0.2,
+    "process": 0.6,
+    "cpu": 0.2
+  },
+  "refresh_interval": 500,
+  "max_processes": 500,
+  "gpu_history_length": 100,
+  "show_tooltips": true,
+  "alert_thresholds": {
+    "cpu_usage_percent": 95,
+    "cpu_temp_celsius": 90,
+    "gpu_usage_percent": 98,
+    "gpu_temp_celsius": 90,
+    "memory_usage_percent": 95,
+    "disk_usage_percent": 90
+  }
+}

@@ -30,6 +30,9 @@ func (m *MockProvider) Init() error {
 }
 
 func (m *MockProvider) GetStats() (*SystemStats, error) {
+	// Clear GPU processes to prevent infinite growth
+	m.lastStats.GPU.Processes = nil
+
 	// Simulate metric updates with some randomness
 	now := time.Now()
 	m.lastStats.Timestamp = now

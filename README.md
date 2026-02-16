@@ -39,6 +39,20 @@ go build -o omnitop cmd/omnitop/main.go
 ./omnitop --mock
 ```
 
+## Profiles
+
+OmniTop ships with 5 pre-built profiles optimized for different monitoring needs:
+- `profiles.json` (Default): General purpose monitoring (NVTop + BTop + HTop hybrid).
+- `profiles/process.json`: Process management focus (Middle column expanded).
+- `profiles/scheduling.json`: CPU scheduling focus (Right column expanded).
+- `profiles/memory.json`: Memory management focus (Optimized thresholds).
+- `profiles/filesystem.json`: Disk I/O focus (Optimized thresholds).
+
+To load a specific profile:
+```bash
+./omnitop -config profiles/process.json
+```
+
 ## Key Bindings
 
 | Key | Action |
@@ -49,12 +63,14 @@ go build -o omnitop cmd/omnitop/main.go
 | `/` | Filter Processes (Type name/user/PID) |
 | `s` | Cycle Sort Order (CPU -> MEM -> PID) |
 | `k` / `F9` | Kill Selected Process (SIGTERM) |
+| `g` | Toggle GPU Process List / Graph |
+| `t` | Toggle Tooltips |
 | `Up` / `Down` | Navigate Process List |
 | `Enter` / `Esc`| Confirm / Cancel Filter |
 
 ## Configuration
 
-Configuration is stored in `profiles.json` in the current directory. It is automatically created on first run if missing.
+Configuration is stored in `profiles.json` (or the file specified via `-config`). It is automatically created on first run if missing.
 
 Example `profiles.json`:
 ```json
