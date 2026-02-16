@@ -8,17 +8,21 @@ import (
 	"github.com/shirou/gopsutil/v3/cpu"
 	"github.com/shirou/gopsutil/v3/disk"
 	"github.com/shirou/gopsutil/v3/host"
+	"github.com/shirou/gopsutil/v3/load"
 	"github.com/shirou/gopsutil/v3/mem"
 	"github.com/shirou/gopsutil/v3/net"
 	"github.com/shirou/gopsutil/v3/process"
 )
 
 type RealProvider struct {
-	hasGPU     bool
-	gpuHistory []float64
-	lastNet    NetStats
-	lastDisk   DiskStats
-	lastTime   time.Time
+	hasGPU        bool
+	gpuHistory    []float64
+	lastNet       NetStats
+	lastDisk      DiskStats
+	lastTime      time.Time
+	procCache     map[int32]*process.Process
+	lastDiskRead  uint64
+	lastDiskWrite uint64
 }
 
 func (r *RealProvider) Init() error {
@@ -51,10 +55,6 @@ func (r *RealProvider) GetStats() (*SystemStats, error) {
 	if uptime, err := host.Uptime(); err == nil {
 		stats.Uptime = uptime
 	}
-
-	// Uptime
-	uptime, _ := host.Uptime()
-	stats.Uptime = uptime
 
 	// CPU
 	cpuPercent, err := cpu.Percent(0, true)
@@ -98,15 +98,6 @@ func (r *RealProvider) GetStats() (*SystemStats, error) {
 		}
 	}
 
-	// Calculate Disk Speed
-	if r.lastDiskRead > 0 {
-		stats.Disk.ReadSpeed = uint64(float64(stats.Disk.ReadBytes-r.lastDiskRead) / duration)
-		stats.Disk.WriteSpeed = uint64(float64(stats.Disk.WriteBytes-r.lastDiskWrite) / duration)
-	}
-	r.lastDiskRead = stats.Disk.ReadBytes
-	r.lastDiskWrite = stats.Disk.WriteBytes
-
-
 	// Network
 	netCounters, err := net.IOCounters(false)
 	if err == nil && len(netCounters) > 0 {
@@ -115,27 +106,27 @@ func (r *RealProvider) GetStats() (*SystemStats, error) {
 	}
 
 	// Calculate speeds
-	now := time.Now()
 	if !r.lastTime.IsZero() {
-		duration := now.Sub(r.lastTime).Seconds()
-		if duration > 0 {
-			if stats.Disk.ReadBytes >= r.lastDisk.ReadBytes {
-				stats.Disk.ReadSpeed = uint64(float64(stats.Disk.ReadBytes-r.lastDisk.ReadBytes) / duration)
-			}
-			if stats.Disk.WriteBytes >= r.lastDisk.WriteBytes {
-				stats.Disk.WriteSpeed = uint64(float64(stats.Disk.WriteBytes-r.lastDisk.WriteBytes) / duration)
-			}
-			if stats.Net.BytesSent >= r.lastNet.BytesSent {
-				stats.Net.UploadSpeed = uint64(float64(stats.Net.BytesSent-r.lastNet.BytesSent) / duration)
-			}
-			if stats.Net.BytesRecv >= r.lastNet.BytesRecv {
-				stats.Net.DownloadSpeed = uint64(float64(stats.Net.BytesRecv-r.lastNet.BytesRecv) / duration)
-			}
+		if stats.Disk.ReadBytes >= r.lastDisk.ReadBytes {
+			stats.Disk.ReadSpeed = uint64(float64(stats.Disk.ReadBytes-r.lastDisk.ReadBytes) / duration)
+		}
+		if stats.Disk.WriteBytes >= r.lastDisk.WriteBytes {
+			stats.Disk.WriteSpeed = uint64(float64(stats.Disk.WriteBytes-r.lastDisk.WriteBytes) / duration)
+		}
+		if stats.Net.BytesSent >= r.lastNet.BytesSent {
+			stats.Net.UploadSpeed = uint64(float64(stats.Net.BytesSent-r.lastNet.BytesSent) / duration)
+		}
+		if stats.Net.BytesRecv >= r.lastNet.BytesRecv {
+			stats.Net.DownloadSpeed = uint64(float64(stats.Net.BytesRecv-r.lastNet.BytesRecv) / duration)
 		}
 	}
+
+	// Update last state
 	r.lastTime = now
 	r.lastDisk = stats.Disk
 	r.lastNet = stats.Net
+	r.lastDiskRead = stats.Disk.ReadBytes
+	r.lastDiskWrite = stats.Disk.WriteBytes
 
 	// GPU (if available)
 	gpuPids := make(map[uint32]bool)

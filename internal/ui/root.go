@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"log"
 	"math/rand"
 	"os/exec"
 	"time"
@@ -29,8 +30,9 @@ func tick(interval int) tea.Cmd {
 }
 
 type RootModel struct {
-	provider metrics.Provider
-	config   *config.ProfileConfiguration
+	provider   metrics.Provider
+	config     *config.ProfileConfiguration
+	configPath string
 
 	// Sub-models
 	gpu     GPUModel
@@ -51,7 +53,7 @@ type RootModel struct {
 	lastAlertTime  time.Time
 }
 
-func NewRootModel(provider metrics.Provider, cfg *config.ProfileConfiguration) RootModel {
+func NewRootModel(provider metrics.Provider, cfg *config.ProfileConfiguration, configPath string) RootModel {
 	// Defaults if config is missing values
 	col1 := 0.30
 	col2 := 0.40
@@ -65,14 +67,15 @@ func NewRootModel(provider metrics.Provider, cfg *config.ProfileConfiguration) R
 	}
 
 	return RootModel{
-		provider: provider,
-		config:   cfg,
-		gpu:      NewGPUModel(),
-		process:  NewProcessModel(),
-		cpu:      NewCPUModel(),
-		footer:   NewFooterModel(),
-		col1Pct:  col1,
-		col2Pct:  col2,
+		provider:   provider,
+		config:     cfg,
+		configPath: configPath,
+		gpu:        NewGPUModel(),
+		process:    NewProcessModel(),
+		cpu:        NewCPUModel(),
+		footer:     NewFooterModel(),
+		col1Pct:    col1,
+		col2Pct:    col2,
 	}
 }
 
@@ -93,12 +96,20 @@ func (m RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.String() {
 		case "q", "ctrl+c":
 			// Save config on exit
-			m.config.ColumnWidths["gpu"] = m.col1Pct
-			m.config.ColumnWidths["process"] = m.col2Pct
-			m.config.ColumnWidths["cpu"] = 1.0 - m.col1Pct - m.col2Pct
-			// Best effort save to profiles.json
-			if err := config.SaveConfig("profiles.json", m.config); err != nil {
-				log.Printf("Failed to save config: %v", err)
+			if m.config != nil {
+				m.config.ColumnWidths["gpu"] = m.col1Pct
+				m.config.ColumnWidths["process"] = m.col2Pct
+				m.config.ColumnWidths["cpu"] = 1.0 - m.col1Pct - m.col2Pct
+
+				savePath := "profiles.json"
+				if m.configPath != "" {
+					savePath = m.configPath
+				}
+
+				// Best effort save
+				if err := config.SaveConfig(savePath, m.config); err != nil {
+					log.Printf("Failed to save config: %v", err)
+				}
 			}
 			return m, tea.Quit
 		case "[": // Shrink Left Col
@@ -132,6 +143,12 @@ func (m RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Pass keys to sub-models
 		m.process, cmd = m.process.Update(msg)
 		cmds = append(cmds, cmd)
+
+		// Sync highlight
+		pid := m.process.SelectedPID()
+		m.gpu.SetHighlight(pid)
+		m.cpu.SetHighlight(pid)
+
 		m.gpu, cmd = m.gpu.Update(msg) // GPU toggle process list
 		cmds = append(cmds, cmd)
 
@@ -168,6 +185,11 @@ func (m RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Pass mouse to sub-models
 		m.process, cmd = m.process.Update(msg)
 		cmds = append(cmds, cmd)
+
+		// Sync highlight
+		pid := m.process.SelectedPID()
+		m.gpu.SetHighlight(pid)
+		m.cpu.SetHighlight(pid)
 	}
 
 	return m, tea.Batch(cmds...)
@@ -268,45 +290,18 @@ func (m RootModel) View() string {
 		m.cpu.View(),
 	)
 
+	// Update footer tooltip before viewing
+	if m.showTooltip && m.tooltipContent != "" {
+		m.footer.SetHelp(m.tooltipContent)
+	} else {
+		m.footer.SetHelp("")
+	}
+
 	// Add Footer
 	view := lipgloss.JoinVertical(lipgloss.Left,
 		cols,
 		m.footer.View(),
 	)
 
-	// Overlay Tooltip (in Footer)
-	if m.showTooltip && m.tooltipContent != "" {
-		// Re-rendering footer with tooltip content
-		m.footer.SetHelp(m.tooltipContent)
-	} else {
-		m.footer.SetHelp("")
-	}
-
-	// Re-render footer since we might have updated it (Wait, `View` is pure usually, but here I modify footer state?
-	// `SetHelp` on `m.footer` modifies `m`? `m` is value receiver in `View`.
-	// So `m.footer.SetHelp` modifies local copy of footer.
-	// Then `m.footer.View()` uses that local copy.
-	// This works!
-
-	// Re-join
-	view = lipgloss.JoinVertical(lipgloss.Left,
-		cols,
-		footerView,
-	)
-
 	return view
-}
-
-func (m RootModel) getTooltipText() string {
-	// Determine column based on mouseX
-	w1 := int(float64(m.width) * m.col1Pct)
-	w2 := int(float64(m.width) * m.col2Pct)
-
-	if m.mouseX < w1 {
-		return "GPU Panel: Shows NVIDIA GPU utilization, VRAM usage, and temps. Press 'g' to toggle process view."
-	} else if m.mouseX < w1+w2 {
-		return "Process Panel: Sortable list of running processes. Use 'k' to kill, 'c/m/p' to sort."
-	} else {
-		return "CPU Panel: Per-core usage bars and system load averages."
-	}
 }
