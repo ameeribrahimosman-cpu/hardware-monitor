@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"log"
 	"math/rand"
 	"os/exec"
 	"time"
@@ -93,12 +94,14 @@ func (m RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.String() {
 		case "q", "ctrl+c":
 			// Save config on exit
-			m.config.ColumnWidths["gpu"] = m.col1Pct
-			m.config.ColumnWidths["process"] = m.col2Pct
-			m.config.ColumnWidths["cpu"] = 1.0 - m.col1Pct - m.col2Pct
-			// Best effort save to profiles.json
-			if err := config.SaveConfig("profiles.json", m.config); err != nil {
-				log.Printf("Failed to save config: %v", err)
+			if m.config != nil {
+				m.config.ColumnWidths["gpu"] = m.col1Pct
+				m.config.ColumnWidths["process"] = m.col2Pct
+				m.config.ColumnWidths["cpu"] = 1.0 - m.col1Pct - m.col2Pct
+				// Best effort save to profiles.json
+				if err := config.SaveConfig("profiles.json", m.config); err != nil {
+					log.Printf("Failed to save config: %v", err)
+				}
 			}
 			return m, tea.Quit
 		case "[": // Shrink Left Col
@@ -106,25 +109,25 @@ func (m RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.col1Pct < 0.1 {
 				m.col1Pct = 0.1
 			}
-			m.resizeModules()
+			m = m.resizeModules()
 		case "]": // Expand Left Col
 			m.col1Pct += 0.05
 			if m.col1Pct+m.col2Pct > 0.9 {
 				m.col1Pct = 0.9 - m.col2Pct
 			}
-			m.resizeModules()
+			m = m.resizeModules()
 		case "{": // Shrink Middle Col (effectively expands Right)
 			m.col2Pct -= 0.05
 			if m.col2Pct < 0.1 {
 				m.col2Pct = 0.1
 			}
-			m.resizeModules()
+			m = m.resizeModules()
 		case "}": // Expand Middle Col
 			m.col2Pct += 0.05
 			if m.col1Pct+m.col2Pct > 0.9 {
 				m.col2Pct = 0.9 - m.col1Pct
 			}
-			m.resizeModules()
+			m = m.resizeModules()
 		case "t": // Toggle Tooltips
 			m.showTooltip = !m.showTooltip
 		}
@@ -138,7 +141,7 @@ func (m RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-		m.resizeModules()
+		m = m.resizeModules()
 
 	case TickMsg:
 		// Fetch metrics
@@ -234,9 +237,9 @@ func (m *RootModel) updateTooltip() {
 	}
 }
 
-func (m *RootModel) resizeModules() {
+func (m RootModel) resizeModules() RootModel {
 	if m.width == 0 || m.height == 0 {
-		return
+		return m
 	}
 
 	// Calculate widths
@@ -254,6 +257,7 @@ func (m *RootModel) resizeModules() {
 	m.process.SetSize(w2, h)
 	m.cpu.SetSize(w3, h)
 	m.footer.SetSize(m.width)
+	return m
 }
 
 func (m RootModel) View() string {
@@ -268,12 +272,6 @@ func (m RootModel) View() string {
 		m.cpu.View(),
 	)
 
-	// Add Footer
-	view := lipgloss.JoinVertical(lipgloss.Left,
-		cols,
-		m.footer.View(),
-	)
-
 	// Overlay Tooltip (in Footer)
 	if m.showTooltip && m.tooltipContent != "" {
 		// Re-rendering footer with tooltip content
@@ -282,16 +280,10 @@ func (m RootModel) View() string {
 		m.footer.SetHelp("")
 	}
 
-	// Re-render footer since we might have updated it (Wait, `View` is pure usually, but here I modify footer state?
-	// `SetHelp` on `m.footer` modifies `m`? `m` is value receiver in `View`.
-	// So `m.footer.SetHelp` modifies local copy of footer.
-	// Then `m.footer.View()` uses that local copy.
-	// This works!
-
-	// Re-join
-	view = lipgloss.JoinVertical(lipgloss.Left,
+	// Add Footer
+	view := lipgloss.JoinVertical(lipgloss.Left,
 		cols,
-		footerView,
+		m.footer.View(),
 	)
 
 	return view
