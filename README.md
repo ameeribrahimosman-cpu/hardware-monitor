@@ -35,6 +35,9 @@ go build -o omnitop cmd/omnitop/main.go
 # Run with real sensors (requires NVIDIA GPU for full GPU metrics)
 ./omnitop
 
+# Run with a specific profile
+./omnitop -config profile_process.json
+
 # Run in Mock Mode (simulated data for testing/demo)
 ./omnitop --mock
 ```
@@ -54,7 +57,14 @@ go build -o omnitop cmd/omnitop/main.go
 
 ## Configuration
 
-Configuration is stored in `profiles.json` in the current directory. It is automatically created on first run if missing.
+Configuration is stored in `profiles.json` in the current directory. It is automatically created on first run if missing. You can load other profiles using the `-config` flag.
+
+Included profiles:
+- `profiles.json`: Default balanced triple-column view.
+- `profile_process.json`: Expanded process list.
+- `profile_scheduling.json`: Expanded CPU view.
+- `profile_memory.json`: Focus on memory metrics.
+- `profile_filesystem.json`: Focus on disk I/O.
 
 Example `profiles.json`:
 ```json
