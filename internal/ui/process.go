@@ -273,11 +273,6 @@ func (m ProcessModel) View() string {
 	// Use 100MB/s as arbitrary max for visualization for now
 	const maxIO = 100 * 1024 * 1024 // 100MB
 
-	// We need speed (bytes/sec) but stats.Net is Total Bytes.
-	// ProcessModel doesn't store previous stats to calc speed?
-	// metrics.SystemStats has DiskStats which has ReadSpeed/WriteSpeed?
-	// Let's check internal/metrics/types.go. Yes!
-
 	netDownBar := renderBar(int(m.stats.Net.DownloadSpeed), maxIO, m.width/2-2, fmt.Sprintf("Net ↓ %s/s", formatBytes(m.stats.Net.DownloadSpeed)))
 	netUpBar := renderBar(int(m.stats.Net.UploadSpeed), maxIO, m.width/2-2, fmt.Sprintf("Net ↑ %s/s", formatBytes(m.stats.Net.UploadSpeed)))
 
@@ -286,8 +281,6 @@ func (m ProcessModel) View() string {
 
 	ioRow1 := lipgloss.JoinHorizontal(lipgloss.Top, netDownBar, " ", netUpBar)
 	ioRow2 := lipgloss.JoinHorizontal(lipgloss.Top, diskReadBar, " ", diskWriteBar)
-
-	headerText := fmt.Sprintf("Processes (Sort: %s) [c:CPU m:MEM p:PID k:Kill]", strings.ToUpper(m.sortBy))
 
 	return style.Render(lipgloss.JoinVertical(lipgloss.Left,
 		header,
