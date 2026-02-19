@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"sort"
 	"strings"
@@ -93,9 +94,8 @@ func (m ProcessModel) Update(msg tea.Msg) (ProcessModel, tea.Cmd) {
 			}
 		}
 		m.textInput, cmd = m.textInput.Update(msg)
-		m.filter = m.textInput.Value() // Live filter
-		// Re-apply filter immediately
-		m.SetStats(m.stats)
+		m.filter = m.textInput.Value()
+		m.SetStats(m.stats) // Re-apply filter
 		return m, cmd
 	}
 
@@ -109,33 +109,20 @@ func (m ProcessModel) Update(msg tea.Msg) (ProcessModel, tea.Cmd) {
 			return m, textinput.Blink
 		case "s":
 			m.sortBy = (m.sortBy + 1) % 3
-			// Re-sort
 			m.SetStats(m.stats)
 		case "k", "f9":
 			if len(m.table.SelectedRow()) > 0 {
 				pidStr := m.table.SelectedRow()[0]
 				var pid int
 				fmt.Sscanf(pidStr, "%d", &pid)
-				// Kill
 				p, err := os.FindProcess(pid)
 				if err == nil {
-					_ = p.Signal(syscall.SIGTERM) // or Kill
-				}
-			}
-		case "[": // Renice + (Lower priority, higher value)
-			if len(m.table.SelectedRow()) > 0 {
-				pidStr := m.table.SelectedRow()[0]
-				var pid int
-				fmt.Sscanf(pidStr, "%d", &pid)
-				proc, err := process.NewProcess(int32(pid))
-				if err == nil {
-					nice, err := proc.Nice()
-					if err == nil {
-						_ = syscall.Setpriority(syscall.PRIO_PROCESS, pid, int(nice+1))
+					if err := p.Signal(syscall.SIGTERM); err != nil {
+						log.Printf("Failed to kill PID %d: %v", pid, err)
 					}
 				}
 			}
-		case "]": // Renice - (Higher priority, lower value)
+		case "f8": // Renice + (Lower priority, higher value)
 			if len(m.table.SelectedRow()) > 0 {
 				pidStr := m.table.SelectedRow()[0]
 				var pid int
@@ -144,7 +131,24 @@ func (m ProcessModel) Update(msg tea.Msg) (ProcessModel, tea.Cmd) {
 				if err == nil {
 					nice, err := proc.Nice()
 					if err == nil {
-						_ = syscall.Setpriority(syscall.PRIO_PROCESS, pid, int(nice-1))
+						if err := syscall.Setpriority(syscall.PRIO_PROCESS, pid, int(nice+1)); err != nil {
+							log.Printf("Failed to renice PID %d: %v", pid, err)
+						}
+					}
+				}
+			}
+		case "f7": // Renice - (Higher priority, lower value)
+			if len(m.table.SelectedRow()) > 0 {
+				pidStr := m.table.SelectedRow()[0]
+				var pid int
+				fmt.Sscanf(pidStr, "%d", &pid)
+				proc, err := process.NewProcess(int32(pid))
+				if err == nil {
+					nice, err := proc.Nice()
+					if err == nil {
+						if err := syscall.Setpriority(syscall.PRIO_PROCESS, pid, int(nice-1)); err != nil {
+							log.Printf("Failed to renice PID %d: %v", pid, err)
+						}
 					}
 				}
 			}
@@ -208,26 +212,38 @@ func (m *ProcessModel) SetSize(w, h int) {
 	m.width = w
 	m.height = h
 
-	// Calculate available height for table
-	tableHeight := h - 4
-	if tableHeight < 1 {
-		tableHeight = 1
+	// Calculate space for widgets at bottom
+	// We have 2 lines of borders.
+	contentH := h - 2
+	if contentH < 0 { contentH = 0 }
+
+	// Memory (1) + Swap (1) + IO1 (1) + IO2 (1) + Header (2) + Spacer/Padding (1)
+	// Total widgets + header ~= 7 lines.
+
+	tableHeight := contentH - 7
+	if tableHeight < 3 {
+		tableHeight = 3
 	}
 	m.table.SetHeight(tableHeight)
 
 	// Adjust columns
 	cols := m.table.Columns()
 
-	// Fixed widths for numeric columns
-	cols[0].Width = 6  // PID
-	cols[1].Width = 10 // User
-	cols[2].Width = 6  // CPU
-	cols[3].Width = 6  // Mem
+	// Ensure safe width (minus border and padding)
+	safeW := w - 4 // -2 border, -2 padding
+	if safeW < 10 {
+		safeW = 10
+	}
 
-	usedWidth := 6 + 10 + 6 + 6 + 10 // + padding
-	remaining := w - usedWidth
-	if remaining < 10 {
-		remaining = 10
+	cols[0].Width = 6
+	cols[1].Width = 10
+	cols[2].Width = 6
+	cols[3].Width = 6
+
+	usedWidth := 6 + 10 + 6 + 6
+	remaining := safeW - usedWidth
+	if remaining < 5 {
+		remaining = 5
 	}
 	cols[4].Width = remaining
 	m.table.SetColumns(cols)
@@ -242,7 +258,8 @@ func (m ProcessModel) View() string {
 	if m.Alert {
 		style = AlertPanelStyle
 	}
-	style = style.Copy().Width(m.width).Height(m.height)
+	// Lipgloss adds border to width/height, so we subtract to keep total size correct
+	style = style.Copy().Width(m.width - 2).Height(m.height - 2)
 
 	title := "Processes"
 	if m.filtering {
@@ -259,35 +276,39 @@ func (m ProcessModel) View() string {
 		sortStr = "PID"
 	}
 
+	// Dynamic Spacer
+	availSpace := m.width - lipgloss.Width(title) - lipgloss.Width(sortStr) - 10
+	if availSpace < 0 {
+		availSpace = 0
+	}
+
 	header := lipgloss.JoinHorizontal(lipgloss.Left,
 		TitleStyle.Render(title),
-		lipgloss.PlaceHorizontal(m.width-lipgloss.Width(title)-lipgloss.Width(sortStr)-5, lipgloss.Right, " "),
+		lipgloss.PlaceHorizontal(availSpace, lipgloss.Right, " "),
 		MetricLabelStyle.Render(fmt.Sprintf("[%s]", sortStr)),
 	)
 
-	// Render Memory/Net/Disk bars at bottom
-	memBar := renderBar(int(m.stats.Memory.UsedPercent), 100, m.width-4, fmt.Sprintf("Mem %.1f%%", m.stats.Memory.UsedPercent))
-	swapBar := renderBar(int(m.stats.Memory.SwapPercent), 100, m.width-4, fmt.Sprintf("Swap %.1f%%", m.stats.Memory.SwapPercent))
+	// Bottom widgets
+	barW := m.width - 4
+	if barW < 5 { barW = 5 }
 
-	// Net/Disk (simple bars for speed/activity)
-	// Use 100MB/s as arbitrary max for visualization for now
-	const maxIO = 100 * 1024 * 1024 // 100MB
+	memBar := renderBar(int(m.stats.Memory.UsedPercent), 100, barW, fmt.Sprintf("Mem %.1f%%", m.stats.Memory.UsedPercent))
+	swapBar := renderBar(int(m.stats.Memory.SwapPercent), 100, barW, fmt.Sprintf("Swap %.1f%%", m.stats.Memory.SwapPercent))
 
-	// We need speed (bytes/sec) but stats.Net is Total Bytes.
-	// ProcessModel doesn't store previous stats to calc speed?
-	// metrics.SystemStats has DiskStats which has ReadSpeed/WriteSpeed?
-	// Let's check internal/metrics/types.go. Yes!
+	// IO Stats split
+	halfW := (m.width / 2) - 3
+	if halfW < 5 { halfW = 5 }
 
-	netDownBar := renderBar(int(m.stats.Net.DownloadSpeed), maxIO, m.width/2-2, fmt.Sprintf("Net ↓ %s/s", formatBytes(m.stats.Net.DownloadSpeed)))
-	netUpBar := renderBar(int(m.stats.Net.UploadSpeed), maxIO, m.width/2-2, fmt.Sprintf("Net ↑ %s/s", formatBytes(m.stats.Net.UploadSpeed)))
+	const maxIO = 100 * 1024 * 1024 // 100MB scale
 
-	diskReadBar := renderBar(int(m.stats.Disk.ReadSpeed), maxIO, m.width/2-2, fmt.Sprintf("Disk R %s/s", formatBytes(m.stats.Disk.ReadSpeed)))
-	diskWriteBar := renderBar(int(m.stats.Disk.WriteSpeed), maxIO, m.width/2-2, fmt.Sprintf("Disk W %s/s", formatBytes(m.stats.Disk.WriteSpeed)))
+	netDownBar := renderBar(int(m.stats.Net.DownloadSpeed), maxIO, halfW, fmt.Sprintf("↓ %s/s", formatBytes(m.stats.Net.DownloadSpeed)))
+	netUpBar := renderBar(int(m.stats.Net.UploadSpeed), maxIO, halfW, fmt.Sprintf("↑ %s/s", formatBytes(m.stats.Net.UploadSpeed)))
 
-	ioRow1 := lipgloss.JoinHorizontal(lipgloss.Top, netDownBar, " ", netUpBar)
-	ioRow2 := lipgloss.JoinHorizontal(lipgloss.Top, diskReadBar, " ", diskWriteBar)
+	diskReadBar := renderBar(int(m.stats.Disk.ReadSpeed), maxIO, halfW, fmt.Sprintf("R %s/s", formatBytes(m.stats.Disk.ReadSpeed)))
+	diskWriteBar := renderBar(int(m.stats.Disk.WriteSpeed), maxIO, halfW, fmt.Sprintf("W %s/s", formatBytes(m.stats.Disk.WriteSpeed)))
 
-	headerText := fmt.Sprintf("Processes (Sort: %s) [c:CPU m:MEM p:PID k:Kill]", strings.ToUpper(m.sortBy))
+	ioRow1 := lipgloss.JoinHorizontal(lipgloss.Top, netDownBar, "  ", netUpBar)
+	ioRow2 := lipgloss.JoinHorizontal(lipgloss.Top, diskReadBar, "  ", diskWriteBar)
 
 	return style.Render(lipgloss.JoinVertical(lipgloss.Left,
 		header,
