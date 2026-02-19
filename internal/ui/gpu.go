@@ -15,6 +15,7 @@ type GPUModel struct {
 	height int
 	stats  metrics.GPUStats
 	Alert  bool
+	showProcesses bool
 }
 
 func NewGPUModel() GPUModel {
@@ -56,7 +57,8 @@ func (m GPUModel) View() string {
 	if m.Alert {
 		style = AlertPanelStyle
 	}
-	style = style.Copy().Width(m.width).Height(m.height)
+	// Subtract border (2) from width and height
+	style = style.Copy().Width(m.width - 2).Height(m.height - 2)
 
 	if !m.stats.Available {
 		content := lipgloss.Place(m.width-2, m.height-2, lipgloss.Center, lipgloss.Center, "GPU Unavailable\n(Run with --mock to see demo)")
@@ -89,13 +91,12 @@ func (m GPUModel) View() string {
 	powerW := m.stats.PowerUsage / 1000
 	powerLimitW := m.stats.PowerLimit / 1000
 	if powerLimitW == 0 {
-		powerLimitW = 300
-	} // Default fallback if 0
+		powerLimitW = 300 // Default fallback if 0
+	}
 	powerPct := int(float64(powerW) / float64(powerLimitW) * 100)
 	powerBar := renderBar(powerPct, 100, m.width-4, fmt.Sprintf("Pwr %dW", powerW))
 
 	// Calculate space for graph vs process list
-	// We want roughly 50% for graph, remaining for processes if height allows
 	availHeight := m.height - 7 // Header + 5 bars + padding
 	if availHeight < 5 {
 		availHeight = 5 // Minimum fallback
@@ -150,16 +151,6 @@ func (m GPUModel) renderGraph(height int) string {
 		maxPoints = 1
 	}
 
-	// Create a window of data
-	window := data
-	if len(window) > maxPoints {
-		window = window[len(window)-maxPoints:]
-	}
-
-	var sb strings.Builder
-	sb.WriteString(TitleStyle.Render("Utilization History"))
-	sb.WriteString("\n")
-
 	// Symbols for graph:   ▂▃▄▅▆▇█
 	symbols := []rune{' ', ' ', '▂', '▃', '▄', '▅', '▆', '▇', '█'}
 
@@ -176,19 +167,15 @@ func (m GPUModel) renderGraph(height int) string {
 	startIdx := maxPoints - len(data)
 
 	for x, val := range data {
-		// Calculate height relative to max 100
-		// val is 0-100
-		// height is e.g. 10
-		// normalized height = val / 100 * height
+		gridIdx := startIdx + x
+		if gridIdx < 0 || gridIdx >= maxPoints {
+			continue
+		}
 
+		// Calculate height relative to max 100
 		normH := (val / 100.0) * float64(height)
 		fullBlocks := int(math.Floor(normH))
 		remainder := normH - float64(fullBlocks)
-
-		gridIdx := startIdx + x
-		if gridIdx >= maxPoints {
-			continue
-		}
 
 		// Draw full blocks from bottom
 		for y := 0; y < fullBlocks; y++ {
@@ -207,11 +194,13 @@ func (m GPUModel) renderGraph(height int) string {
 				grid[height-1-fullBlocks][gridIdx] = symbols[symIdx]
 			}
 		}
-		// Add a "cap" block if we want more precision, but full block is fine for MVP
 	}
 
+	var sb strings.Builder
+	sb.WriteString(TitleStyle.Render("Utilization History"))
+	sb.WriteString("\n")
+
 	for _, row := range grid {
-		// Trim right side if strictly needed, but maxPoints handles it
 		sb.WriteString(BarStyle.Render(string(row)) + "\n")
 	}
 
@@ -224,43 +213,11 @@ func (m GPUModel) renderProcessTable(height int) string {
 	sb.WriteString("\n")
 
 	if len(m.stats.Processes) == 0 {
-		sb.WriteString("No GPU processes found.")
-		return sb.String()
-	}
-
-	// Header
-	sb.WriteString(fmt.Sprintf("%-8s %-15s %s\n", "PID", "Mem", "Name"))
-
-	count := 0
-	for _, p := range m.stats.Processes {
-		if count >= height-2 {
-			break
-		}
-		memStr := fmt.Sprintf("%dMiB", p.MemoryUsed/1024/1024)
-		sb.WriteString(fmt.Sprintf("%-8d %-15s %s\n", p.PID, memStr, p.Name))
-		count++
-	}
-
-	return sb.String()
-}
-
-func (m GPUModel) renderProcessTable(height int) string {
-	var sb strings.Builder
-	sb.WriteString(TitleStyle.Render("GPU Processes"))
-	sb.WriteString("\n")
-
-	// Filter GPU processes
-	// Assuming stats.Processes contains all system processes, we need to filter
-	// wait, stats.Processes is missing in GPUStats struct in types.go?
-	// Let's check types.go. Yes, GPUStats has `Processes []GPUProcess`.
-
-	if len(m.stats.Processes) == 0 {
 		sb.WriteString(MetricLabelStyle.Render("No GPU processes"))
 		return sb.String()
 	}
 
 	// Columns: PID, Name, VRAM
-	// PID (6), Name (15), VRAM (10)
 	header := fmt.Sprintf("%-6s %-15s %-10s", "PID", "Name", "VRAM")
 	sb.WriteString(MetricLabelStyle.Render(header) + "\n")
 

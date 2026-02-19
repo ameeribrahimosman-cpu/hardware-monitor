@@ -21,10 +21,22 @@ func (m *MockProvider) Init() error {
 			Available:      true,
 			Name:           "NVIDIA GeForce RTX 4090",
 			MemoryTotal:    24576 * 1024 * 1024,
-			HistoricalUtil: make([]float64, 60),
+			HistoricalUtil: make([]float64, 100),
 			Processes:      make([]GPUProcess, 0),
 		},
 		Processes: make([]ProcessInfo, 50),
+		Disk: DiskStats{
+			ReadSpeed:  1024 * 1024 * 10, // 10 MB/s
+			WriteSpeed: 1024 * 1024 * 5,  // 5 MB/s
+		},
+		Net: NetStats{
+			DownloadSpeed: 1024 * 1024 * 2, // 2 MB/s
+			UploadSpeed:   1024 * 1024 * 1, // 1 MB/s
+		},
+	}
+	// Fill historical graph with some noise
+	for i := range m.lastStats.GPU.HistoricalUtil {
+		m.lastStats.GPU.HistoricalUtil[i] = 10 + rand.Float64()*30
 	}
 	return nil
 }
@@ -45,7 +57,7 @@ func (m *MockProvider) GetStats() (*SystemStats, error) {
 
 	// Memory
 	m.lastStats.Memory.Total = 32 * 1024 * 1024 * 1024
-	m.lastStats.Memory.Used = 12 * 1024 * 1024 * 1024
+	m.lastStats.Memory.Used = 12 * 1024 * 1024 * 1024 + uint64(rand.Int63n(1024*1024*1024))
 	m.lastStats.Memory.Free = m.lastStats.Memory.Total - m.lastStats.Memory.Used
 	m.lastStats.Memory.UsedPercent = float64(m.lastStats.Memory.Used) / float64(m.lastStats.Memory.Total) * 100
 	m.lastStats.Memory.SwapTotal = 8 * 1024 * 1024 * 1024
@@ -61,25 +73,38 @@ func (m *MockProvider) GetStats() (*SystemStats, error) {
 	m.lastStats.GPU.MemoryClock = 10500
 	m.lastStats.GPU.PowerUsage = 150000 // mW
 	m.lastStats.GPU.PowerLimit = 450000 // mW
-	// Compute VRAM utilization percentage
 	if m.lastStats.GPU.MemoryTotal > 0 {
 		m.lastStats.GPU.MemoryUtil = uint32(float64(m.lastStats.GPU.MemoryUsed) / float64(m.lastStats.GPU.MemoryTotal) * 100.0)
 	}
 
 	// Historical Graph
-	m.lastStats.GPU.HistoricalUtil = append(m.lastStats.GPU.HistoricalUtil[1:], float64(m.lastStats.GPU.Utilization))
+	if len(m.lastStats.GPU.HistoricalUtil) > 0 {
+		m.lastStats.GPU.HistoricalUtil = append(m.lastStats.GPU.HistoricalUtil[1:], float64(m.lastStats.GPU.Utilization))
+	}
+
+	// Disk & Net (Vary slightly)
+	m.lastStats.Disk.ReadSpeed = uint64(float64(10*1024*1024) * (0.8 + rand.Float64()*0.4))
+	m.lastStats.Disk.WriteSpeed = uint64(float64(5*1024*1024) * (0.8 + rand.Float64()*0.4))
+	m.lastStats.Net.DownloadSpeed = uint64(float64(2*1024*1024) * (0.8 + rand.Float64()*0.4))
+	m.lastStats.Net.UploadSpeed = uint64(float64(1*1024*1024) * (0.8 + rand.Float64()*0.4))
+
 
 	// Fake Processes
-	users := []string{"root", "jules", "systemd"}
-	cmds := []string{"chrome", "code", "go", "kworker", "bash"}
-	m.lastStats.Processes = make([]ProcessInfo, 50) // Reset to avoid appending forever
+	users := []string{"root", "jules", "systemd", "mysql"}
+	cmds := []string{"chrome", "code", "go", "kworker", "bash", "python", "java"}
+	m.lastStats.Processes = make([]ProcessInfo, 50)
+
+	// Reset GPU processes for this tick
+	m.lastStats.GPU.Processes = make([]GPUProcess, 0)
+
 	for i := 0; i < len(m.lastStats.Processes); i++ {
 		isGpu := i < 5
 		pid := int32(1000 + i)
+		name := cmds[rand.Intn(len(cmds))]
 		m.lastStats.Processes[i] = ProcessInfo{
 			PID:        pid,
 			User:       users[rand.Intn(len(users))],
-			Command:    cmds[rand.Intn(len(cmds))],
+			Command:    name,
 			State:      "R",
 			CPUPercent: rand.Float64() * 5,
 			MemPercent: rand.Float64() * 2,
@@ -89,15 +114,22 @@ func (m *MockProvider) GetStats() (*SystemStats, error) {
 		}
 
 		if isGpu {
-			// Add to GPU process list if not already there (simplified for mock)
-			if len(m.lastStats.GPU.Processes) < 5 {
-				m.lastStats.GPU.Processes = append(m.lastStats.GPU.Processes, GPUProcess{
-					PID:        uint32(pid),
-					MemoryUsed: uint64(rand.Int63n(1000) * 1024 * 1024),
-				})
-			}
+			m.lastStats.GPU.Processes = append(m.lastStats.GPU.Processes, GPUProcess{
+				PID:        uint32(pid),
+				Name:       name,
+				MemoryUsed: uint64(rand.Int63n(1000) * 1024 * 1024),
+			})
 		}
 	}
+
+	// Simulate GPU process name resolution (mock already has it)
+
+	// Return a COPY or POINTER?
+	// If I modify m.lastStats next time, the caller might still be holding the pointer.
+	// But in Bubble Tea loop, we usually consume stats immediately.
+	// For safety, returning pointer to member is risky if caller modifies it, but here caller is read-only UI.
+	// The problem is m.lastStats internal state (HistoricalUtil slice) is mutated.
+	// That's fine.
 
 	return &m.lastStats, nil
 }

@@ -49,6 +49,9 @@ go build -o omnitop cmd/omnitop/main.go
 | `/` | Filter Processes (Type name/user/PID) |
 | `s` | Cycle Sort Order (CPU -> MEM -> PID) |
 | `k` / `F9` | Kill Selected Process (SIGTERM) |
+| `F7` / `F8` | Renice Process (- / +) |
+| `g` | Toggle GPU Process List |
+| `t` | Toggle Tooltips |
 | `Up` / `Down` | Navigate Process List |
 | `Enter` / `Esc`| Confirm / Cancel Filter |
 

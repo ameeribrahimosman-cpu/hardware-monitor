@@ -5,30 +5,34 @@ import (
 )
 
 func TestMockProvider(t *testing.T) {
-	provider := &MockProvider{}
-	err := provider.Init()
-	if err != nil {
+	m := &MockProvider{}
+	if err := m.Init(); err != nil {
 		t.Fatalf("Init failed: %v", err)
 	}
 
-	stats, err := provider.GetStats()
-	if err != nil {
-		t.Fatalf("GetStats failed: %v", err)
-	}
+	for i := 0; i < 5; i++ {
+		stats, err := m.GetStats()
+		if err != nil {
+			t.Fatalf("GetStats failed: %v", err)
+		}
 
-	if stats == nil {
-		t.Fatal("Stats is nil")
-	}
+		if stats == nil {
+			t.Fatal("Stats is nil")
+		}
 
-	if stats.CPU.GlobalUsagePercent < 0 || stats.CPU.GlobalUsagePercent > 100 {
-		t.Errorf("Invalid CPU usage: %f", stats.CPU.GlobalUsagePercent)
-	}
+		if len(stats.Processes) != 50 {
+			t.Errorf("Expected 50 processes, got %d", len(stats.Processes))
+		}
 
-	if len(stats.Processes) == 0 {
-		t.Error("No processes returned in mock mode")
-	}
+		// GPU Process check
+		// We expect 5 GPU processes based on mock logic
+		if len(stats.GPU.Processes) != 5 {
+			t.Errorf("Expected 5 GPU processes, got %d", len(stats.GPU.Processes))
+		}
 
-	if !stats.GPU.Available {
-		t.Error("GPU should be available in mock mode")
+		// Historical Graph check
+		if len(stats.GPU.HistoricalUtil) < 1 {
+			t.Error("HistoricalUtil is empty")
+		}
 	}
 }

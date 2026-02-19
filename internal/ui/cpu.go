@@ -12,7 +12,7 @@ import (
 type CPUModel struct {
 	width  int
 	height int
-	stats  metrics.SystemStats // Holds all for summary
+	stats  metrics.SystemStats
 	Alert  bool
 }
 
@@ -46,7 +46,7 @@ func (m CPUModel) View() string {
 	if m.Alert {
 		style = AlertPanelStyle
 	}
-	style = style.Copy().Width(m.width).Height(m.height)
+	style = style.Copy().Width(m.width - 2).Height(m.height - 2)
 
 	// Uptime
 	uptimeDuration := m.stats.Uptime
@@ -56,9 +56,13 @@ func (m CPUModel) View() string {
 	uptimeStr := fmt.Sprintf("Up: %dd %02dh %02dm", days, hours, mins)
 
 	// CPU Header
+	// We need to calculate available width for spacer
+	availSpacer := m.width - 20 - len(uptimeStr) - 2 // -2 border/padding
+	if availSpacer < 0 { availSpacer = 0 }
+
 	cpuHeader := lipgloss.JoinHorizontal(lipgloss.Left,
 		TitleStyle.Render(fmt.Sprintf("CPU: %.1f%%", m.stats.CPU.GlobalUsagePercent)),
-		lipgloss.PlaceHorizontal(m.width-20-len(uptimeStr), lipgloss.Right, " "),
+		lipgloss.PlaceHorizontal(availSpacer, lipgloss.Right, " "),
 		MetricLabelStyle.Render(uptimeStr),
 	)
 
@@ -67,28 +71,12 @@ func (m CPUModel) View() string {
 	load := MetricLabelStyle.Render(loadStr)
 
 	// Calculate space for Cores
-	// We need space for Memory and GPU summary at bottom?
-	// The requirement says "Per-core CPU bars... memory breakdown, disk I/O, net RX/TX graphs" are in MIDDLE column?
-	// Wait, the prompt says:
-	// "Middle Column (~40% width): btop/htop hybrid – Full sortable process list..., bottom stacked: memory breakdown, disk I/O, net RX/TX graphs."
-	// "Right Column (~30% width): Per-core CPU bars... load averages, quick GPU summary mini-graph."
-
-	// So Memory/Disk/Net graphs should be in ProcessModel (Middle), not CPUModel (Right)?
-	// But `ProcessModel` currently only has the table.
-	// `RootModel` logic in `View` puts `process` in middle.
-	// Currently `process.View` only renders the table.
-	// I should probably move Memory/Disk/Net to Process column or a separate widget below it.
-	// However, `RootModel` splits into 3 columns.
-	// Left: GPU. Middle: Process. Right: CPU.
-	// If the user wants Memory/Disk/Net in middle, I should add them to `ProcessModel` or split the middle column.
-	// Given the complexity, I might stick to what I have or try to fit them.
-	// But let's focus on CPUModel (Right Column) for now.
-	// Requirement: Per-core bars, load averages, quick GPU summary.
-
-	// Cores
-	availHeight := m.height - 8 // Reserve for header, load, gpu summary
-	if availHeight < 5 {
-		availHeight = 5
+	// Header(1) + Load(1) + \n(1) + \n(1) + GPU Header(1) + GPU Bar(1) = 6 lines
+	// Available height for cores:
+	contentH := m.height - 2
+	availHeight := contentH - 6
+	if availHeight < 2 {
+		availHeight = 2
 	}
 
 	cores := renderCores(m.stats.CPU.PerCoreUsage, m.stats.CPU.PerCoreTemp, m.width-4, availHeight)
@@ -121,26 +109,28 @@ func renderCores(usage []float64, temps []float64, width, height int) string {
 	}
 
 	// Dynamic columns based on width and count
-	// Target roughly 20 chars per column?
+	// Target roughly 15-20 chars per column
+	// If width is small, maybe 1 column
+	// If width is large, maybe 2 or 3
 	colWidth := 20
-	numCols := width / colWidth
-	if numCols < 1 {
-		numCols = 1
+	if width < 25 {
+		colWidth = width // Single column if very narrow
 	}
 
-	// Ensure we don't exceed height too much
-	// Rows needed = ceil(count / cols)
-	// If rows > height, increase cols if possible?
-	// Or scroll? TUI usually doesn't scroll automatically without viewport.
-	// Let's stick to simple grid.
+	numCols := width / colWidth
+	if numCols < 1 { numCols = 1 }
 
 	var sb strings.Builder
 
+	// Calculate how many rows we can fit
 	rows := (len(usage) + numCols - 1) / numCols
+
+	// If rows exceed height, we might need more columns or truncation
+	// For MVP, just truncate if too tall, but try to fit
 
 	for r := 0; r < rows; r++ {
 		if r >= height {
-			sb.WriteString(MetricLabelStyle.Render("..."))
+			// sb.WriteString(MetricLabelStyle.Render("..."))
 			break
 		}
 
@@ -152,15 +142,22 @@ func renderCores(usage []float64, temps []float64, width, height int) string {
 			}
 
 			// Render individual core bar
-			// [ 0] ||||| 50%
 			label := fmt.Sprintf("%2d", idx)
-			// Compact bar
 			u := usage[idx]
-			// We have colWidth - padding
-			w := (width / numCols) - 2
 
-			bar := renderBarCompact(int(u), 100, w, label)
-			rowStr += bar + "  "
+			// Calculate width for this column item
+			// itemWidth := width / numCols
+			// Padding between columns?
+			itemWidth := (width - ((numCols - 1) * 2)) / numCols
+			if itemWidth < 5 { itemWidth = 5 }
+
+			bar := renderBarCompact(int(u), 100, itemWidth, label)
+
+			if c < numCols - 1 {
+				rowStr += bar + "  "
+			} else {
+				rowStr += bar
+			}
 		}
 		sb.WriteString(rowStr + "\n")
 	}
@@ -170,11 +167,17 @@ func renderCores(usage []float64, temps []float64, width, height int) string {
 
 func renderBarCompact(value, max, width int, label string) string {
 	// [Label ||||| ]
+	// Label usually 2 chars " 0", " 1"
 	labelLen := len(label)
-	barLen := width - labelLen - 3 // [ ] and space
-	if barLen < 5 {
+
+	// bar brackets [ ] take 2 chars
+	// space take 1 char
+	// total overhead = labelLen + 3
+
+	barLen := width - labelLen - 3
+	if barLen < 1 {
 		// Just text if too small
-		return fmt.Sprintf("%s %d%%", label, value)
+		return fmt.Sprintf("%s%d", label, value)
 	}
 
 	filled := int(float64(value) / float64(max) * float64(barLen))

@@ -2,7 +2,6 @@ package config
 
 import (
 	"encoding/json"
-	"io/ioutil"
 	"os"
 )
 
@@ -39,15 +38,14 @@ func LoadConfig(path string) (*ProfileConfiguration, error) {
 	// Check if file exists
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		// File doesn't exist, try to write defaults
-		data, err := json.MarshalIndent(cfg, "", "  ")
-		if err == nil {
-			_ = ioutil.WriteFile(path, data, 0644)
+		if err := SaveConfig(path, cfg); err != nil {
+			// Ignore write error, just return defaults
 		}
 		return cfg, nil
 	}
 
 	// Read file
-	data, err := ioutil.ReadFile(path)
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return cfg, err
 	}
@@ -58,4 +56,14 @@ func LoadConfig(path string) (*ProfileConfiguration, error) {
 	}
 
 	return cfg, nil
+}
+
+// SaveConfig writes the configuration to the specified path.
+func SaveConfig(path string, cfg *ProfileConfiguration) error {
+	data, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return err
+	}
+	// Use 0600 permissions for security
+	return os.WriteFile(path, data, 0600)
 }

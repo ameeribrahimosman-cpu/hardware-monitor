@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"log"
 	"math/rand"
 	"os/exec"
 	"time"
@@ -93,12 +94,14 @@ func (m RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.String() {
 		case "q", "ctrl+c":
 			// Save config on exit
-			m.config.ColumnWidths["gpu"] = m.col1Pct
-			m.config.ColumnWidths["process"] = m.col2Pct
-			m.config.ColumnWidths["cpu"] = 1.0 - m.col1Pct - m.col2Pct
-			// Best effort save to profiles.json
-			if err := config.SaveConfig("profiles.json", m.config); err != nil {
-				log.Printf("Failed to save config: %v", err)
+			if m.config != nil {
+				m.config.ColumnWidths["gpu"] = m.col1Pct
+				m.config.ColumnWidths["process"] = m.col2Pct
+				m.config.ColumnWidths["cpu"] = 1.0 - m.col1Pct - m.col2Pct
+				// Best effort save to profiles.json
+				if err := config.SaveConfig("profiles.json", m.config); err != nil {
+					log.Printf("Failed to save config: %v", err)
+				}
 			}
 			return m, tea.Quit
 		case "[": // Shrink Left Col
@@ -148,6 +151,8 @@ func (m RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.process.SetStats(*stats)
 			m.cpu.SetStats(*stats)
 			m.checkAlerts(stats)
+		} else {
+			log.Printf("Error fetching stats: %v", err)
 		}
 		// Continue tick
 		interval := 1000
@@ -222,15 +227,15 @@ func (m *RootModel) updateTooltip() {
 	if m.mouseX < w1 {
 		// GPU
 		m.showTooltip = true
-		m.tooltipContent = "GPU Stats:\nUtilization of graphics core\nand VRAM usage."
+		m.tooltipContent = "GPU Stats: Utilization, VRAM, Temp."
 	} else if m.mouseX < w1+w2 {
 		// Process
 		m.showTooltip = true
-		m.tooltipContent = "Processes:\nList of active tasks.\nSort by CPU/MEM.\nKill: k, Renice: []"
+		m.tooltipContent = "Processes: Kill(k), Renice([]), Sort(s), Filter(/)."
 	} else {
 		// CPU
 		m.showTooltip = true
-		m.tooltipContent = "CPU Stats:\nPer-core usage bars.\nLoad Avg: 1/5/15m."
+		m.tooltipContent = "CPU Stats: Per-core usage & Load Avg."
 	}
 }
 
@@ -268,45 +273,25 @@ func (m RootModel) View() string {
 		m.cpu.View(),
 	)
 
-	// Add Footer
-	view := lipgloss.JoinVertical(lipgloss.Left,
-		cols,
-		m.footer.View(),
-	)
-
-	// Overlay Tooltip (in Footer)
+	// Configure Footer (Tooltip override)
 	if m.showTooltip && m.tooltipContent != "" {
-		// Re-rendering footer with tooltip content
+		// We modify the footer model instance copy on the stack
+		// View is value receiver, so it doesn't affect state permanently
+		// But here m is RootModel (value receiver)
+		// m.footer is a struct field.
+		// If I call SetHelp on m.footer, it modifies m.footer?
+		// No, m is a copy. So m.footer is a copy.
+		// So modifying m.footer here is safe and correct for this View call!
 		m.footer.SetHelp(m.tooltipContent)
 	} else {
 		m.footer.SetHelp("")
 	}
 
-	// Re-render footer since we might have updated it (Wait, `View` is pure usually, but here I modify footer state?
-	// `SetHelp` on `m.footer` modifies `m`? `m` is value receiver in `View`.
-	// So `m.footer.SetHelp` modifies local copy of footer.
-	// Then `m.footer.View()` uses that local copy.
-	// This works!
-
-	// Re-join
-	view = lipgloss.JoinVertical(lipgloss.Left,
+	// Join
+	view := lipgloss.JoinVertical(lipgloss.Left,
 		cols,
-		footerView,
+		m.footer.View(),
 	)
 
 	return view
-}
-
-func (m RootModel) getTooltipText() string {
-	// Determine column based on mouseX
-	w1 := int(float64(m.width) * m.col1Pct)
-	w2 := int(float64(m.width) * m.col2Pct)
-
-	if m.mouseX < w1 {
-		return "GPU Panel: Shows NVIDIA GPU utilization, VRAM usage, and temps. Press 'g' to toggle process view."
-	} else if m.mouseX < w1+w2 {
-		return "Process Panel: Sortable list of running processes. Use 'k' to kill, 'c/m/p' to sort."
-	} else {
-		return "CPU Panel: Per-core usage bars and system load averages."
-	}
 }
