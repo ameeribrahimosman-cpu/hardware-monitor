@@ -41,7 +41,7 @@ func LoadConfig(path string) (*ProfileConfiguration, error) {
 		// File doesn't exist, try to write defaults
 		data, err := json.MarshalIndent(cfg, "", "  ")
 		if err == nil {
-			_ = ioutil.WriteFile(path, data, 0644)
+			_ = ioutil.WriteFile(path, data, 0600)
 		}
 		return cfg, nil
 	}
@@ -58,4 +58,17 @@ func LoadConfig(path string) (*ProfileConfiguration, error) {
 	}
 
 	return cfg, nil
+}
+
+// SaveConfig writes the configuration to the specified path.
+func SaveConfig(path string, cfg *ProfileConfiguration) error {
+	data, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return err
+	}
+	// Secure permissions
+	if err := ioutil.WriteFile(path, data, 0600); err != nil {
+		return err
+	}
+	return nil
 }
