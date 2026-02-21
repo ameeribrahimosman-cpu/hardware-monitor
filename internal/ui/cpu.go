@@ -96,7 +96,7 @@ func (m CPUModel) View() string {
 	// GPU Summary Mini-Graph
 	gpuSummary := ""
 	if m.stats.GPU.Available {
-		gpuSummary = renderBar(int(m.stats.GPU.Utilization), 100, m.width-4, fmt.Sprintf("GPU %d%%", m.stats.GPU.Utilization))
+		gpuSummary = RenderSparkline(m.stats.GPU.HistoricalUtil, m.width-4, 5, 100, fmt.Sprintf("GPU %d%%", m.stats.GPU.Utilization))
 	} else {
 		gpuSummary = MetricLabelStyle.Render("GPU: N/A")
 	}
