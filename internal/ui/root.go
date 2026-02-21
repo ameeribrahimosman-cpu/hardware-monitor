@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"log"
 	"math/rand"
 	"os/exec"
 	"time"
@@ -222,15 +223,15 @@ func (m *RootModel) updateTooltip() {
 	if m.mouseX < w1 {
 		// GPU
 		m.showTooltip = true
-		m.tooltipContent = "GPU Stats:\nUtilization of graphics core\nand VRAM usage."
+		m.tooltipContent = "GPU Stats: Utilization reflects shader core activity.\nVRAM usage impacts texture/model capacity.\nHigh temps (>85C) trigger thermal throttling."
 	} else if m.mouseX < w1+w2 {
 		// Process
 		m.showTooltip = true
-		m.tooltipContent = "Processes:\nList of active tasks.\nSort by CPU/MEM.\nKill: k, Renice: []"
+		m.tooltipContent = "Processes: Active tasks scheduled by kernel.\nCPU% = User + System time. Mem% = RSS (Resident Set Size).\nUse 'k' to signal (SIGTERM/KILL)."
 	} else {
 		// CPU
 		m.showTooltip = true
-		m.tooltipContent = "CPU Stats:\nPer-core usage bars.\nLoad Avg: 1/5/15m."
+		m.tooltipContent = "CPU Stats: Per-core utilization.\nLoad Avg (1/5/15m): Run-queue length.\n>1.0 per thread indicates CPU saturation/latency."
 	}
 }
 
@@ -291,22 +292,8 @@ func (m RootModel) View() string {
 	// Re-join
 	view = lipgloss.JoinVertical(lipgloss.Left,
 		cols,
-		footerView,
+		m.footer.View(),
 	)
 
 	return view
-}
-
-func (m RootModel) getTooltipText() string {
-	// Determine column based on mouseX
-	w1 := int(float64(m.width) * m.col1Pct)
-	w2 := int(float64(m.width) * m.col2Pct)
-
-	if m.mouseX < w1 {
-		return "GPU Panel: Shows NVIDIA GPU utilization, VRAM usage, and temps. Press 'g' to toggle process view."
-	} else if m.mouseX < w1+w2 {
-		return "Process Panel: Sortable list of running processes. Use 'k' to kill, 'c/m/p' to sort."
-	} else {
-		return "CPU Panel: Per-core usage bars and system load averages."
-	}
 }

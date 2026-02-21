@@ -37,18 +37,22 @@ type MemoryStats struct {
 
 // DiskStats holds disk I/O metrics.
 type DiskStats struct {
-	ReadBytes  uint64 // Total read bytes
-	WriteBytes uint64 // Total write bytes
-	ReadSpeed  uint64 // Bytes per second
-	WriteSpeed uint64 // Bytes per second
+	ReadBytes    uint64    // Total read bytes
+	WriteBytes   uint64    // Total write bytes
+	ReadSpeed    uint64    // Bytes per second
+	WriteSpeed   uint64    // Bytes per second
+	ReadHistory  []float64 // Read speed history
+	WriteHistory []float64 // Write speed history
 }
 
 // NetStats holds network I/O metrics.
 type NetStats struct {
-	BytesSent     uint64 // Total bytes sent
-	BytesRecv     uint64 // Total bytes received
-	UploadSpeed   uint64 // Bytes per second
-	DownloadSpeed uint64 // Bytes per second
+	BytesSent       uint64    // Total bytes sent
+	BytesRecv       uint64    // Total bytes received
+	UploadSpeed     uint64    // Bytes per second
+	DownloadSpeed   uint64    // Bytes per second
+	UploadHistory   []float64 // Upload speed history
+	DownloadHistory []float64 // Download speed history
 }
 
 // GPUStats holds NVIDIA GPU metrics.

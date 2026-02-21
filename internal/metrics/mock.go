@@ -24,6 +24,14 @@ func (m *MockProvider) Init() error {
 			HistoricalUtil: make([]float64, 60),
 			Processes:      make([]GPUProcess, 0),
 		},
+		Disk: DiskStats{
+			ReadHistory:  make([]float64, 60),
+			WriteHistory: make([]float64, 60),
+		},
+		Net: NetStats{
+			UploadHistory:   make([]float64, 60),
+			DownloadHistory: make([]float64, 60),
+		},
 		Processes: make([]ProcessInfo, 50),
 	}
 	return nil
@@ -68,6 +76,22 @@ func (m *MockProvider) GetStats() (*SystemStats, error) {
 
 	// Historical Graph
 	m.lastStats.GPU.HistoricalUtil = append(m.lastStats.GPU.HistoricalUtil[1:], float64(m.lastStats.GPU.Utilization))
+
+	// Disk
+	m.lastStats.Disk.ReadSpeed = uint64(rand.Intn(1024 * 1024 * 50)) // 0-50MB/s
+	m.lastStats.Disk.WriteSpeed = uint64(rand.Intn(1024 * 1024 * 20)) // 0-20MB/s
+	if len(m.lastStats.Disk.ReadHistory) > 0 {
+		m.lastStats.Disk.ReadHistory = append(m.lastStats.Disk.ReadHistory[1:], float64(m.lastStats.Disk.ReadSpeed))
+		m.lastStats.Disk.WriteHistory = append(m.lastStats.Disk.WriteHistory[1:], float64(m.lastStats.Disk.WriteSpeed))
+	}
+
+	// Net
+	m.lastStats.Net.UploadSpeed = uint64(rand.Intn(1024 * 1024 * 5))      // 0-5MB/s
+	m.lastStats.Net.DownloadSpeed = uint64(rand.Intn(1024 * 1024 * 100)) // 0-100MB/s
+	if len(m.lastStats.Net.UploadHistory) > 0 {
+		m.lastStats.Net.UploadHistory = append(m.lastStats.Net.UploadHistory[1:], float64(m.lastStats.Net.UploadSpeed))
+		m.lastStats.Net.DownloadHistory = append(m.lastStats.Net.DownloadHistory[1:], float64(m.lastStats.Net.DownloadSpeed))
+	}
 
 	// Fake Processes
 	users := []string{"root", "jules", "systemd"}

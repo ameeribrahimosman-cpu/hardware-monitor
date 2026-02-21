@@ -8,6 +8,7 @@ import (
 	"github.com/shirou/gopsutil/v3/cpu"
 	"github.com/shirou/gopsutil/v3/disk"
 	"github.com/shirou/gopsutil/v3/host"
+	"github.com/shirou/gopsutil/v3/load"
 	"github.com/shirou/gopsutil/v3/mem"
 	"github.com/shirou/gopsutil/v3/net"
 	"github.com/shirou/gopsutil/v3/process"
@@ -16,9 +17,18 @@ import (
 type RealProvider struct {
 	hasGPU     bool
 	gpuHistory []float64
-	lastNet    NetStats
-	lastDisk   DiskStats
-	lastTime   time.Time
+
+	// History buffers
+	netUploadHistory   []float64
+	netDownloadHistory []float64
+	diskReadHistory    []float64
+	diskWriteHistory   []float64
+
+	lastNet  NetStats
+	lastDisk DiskStats
+	lastTime time.Time
+
+	procCache map[int32]*process.Process
 }
 
 func (r *RealProvider) Init() error {
@@ -31,6 +41,13 @@ func (r *RealProvider) Init() error {
 		// Initialize GPU history buffer
 		r.gpuHistory = make([]float64, 0, 100)
 	}
+
+	// Initialize history buffers
+	r.netUploadHistory = make([]float64, 0, 100)
+	r.netDownloadHistory = make([]float64, 0, 100)
+	r.diskReadHistory = make([]float64, 0, 100)
+	r.diskWriteHistory = make([]float64, 0, 100)
+
 	r.lastTime = time.Now()
 	r.procCache = make(map[int32]*process.Process)
 	return nil
@@ -51,10 +68,6 @@ func (r *RealProvider) GetStats() (*SystemStats, error) {
 	if uptime, err := host.Uptime(); err == nil {
 		stats.Uptime = uptime
 	}
-
-	// Uptime
-	uptime, _ := host.Uptime()
-	stats.Uptime = uptime
 
 	// CPU
 	cpuPercent, err := cpu.Percent(0, true)
@@ -98,15 +111,6 @@ func (r *RealProvider) GetStats() (*SystemStats, error) {
 		}
 	}
 
-	// Calculate Disk Speed
-	if r.lastDiskRead > 0 {
-		stats.Disk.ReadSpeed = uint64(float64(stats.Disk.ReadBytes-r.lastDiskRead) / duration)
-		stats.Disk.WriteSpeed = uint64(float64(stats.Disk.WriteBytes-r.lastDiskWrite) / duration)
-	}
-	r.lastDiskRead = stats.Disk.ReadBytes
-	r.lastDiskWrite = stats.Disk.WriteBytes
-
-
 	// Network
 	netCounters, err := net.IOCounters(false)
 	if err == nil && len(netCounters) > 0 {
@@ -114,25 +118,50 @@ func (r *RealProvider) GetStats() (*SystemStats, error) {
 		stats.Net.BytesRecv = netCounters[0].BytesRecv
 	}
 
-	// Calculate speeds
-	now := time.Now()
+	// Calculate speeds and update history
 	if !r.lastTime.IsZero() {
-		duration := now.Sub(r.lastTime).Seconds()
-		if duration > 0 {
-			if stats.Disk.ReadBytes >= r.lastDisk.ReadBytes {
-				stats.Disk.ReadSpeed = uint64(float64(stats.Disk.ReadBytes-r.lastDisk.ReadBytes) / duration)
-			}
-			if stats.Disk.WriteBytes >= r.lastDisk.WriteBytes {
-				stats.Disk.WriteSpeed = uint64(float64(stats.Disk.WriteBytes-r.lastDisk.WriteBytes) / duration)
-			}
-			if stats.Net.BytesSent >= r.lastNet.BytesSent {
-				stats.Net.UploadSpeed = uint64(float64(stats.Net.BytesSent-r.lastNet.BytesSent) / duration)
-			}
-			if stats.Net.BytesRecv >= r.lastNet.BytesRecv {
-				stats.Net.DownloadSpeed = uint64(float64(stats.Net.BytesRecv-r.lastNet.BytesRecv) / duration)
-			}
+		// Disk Speed
+		if stats.Disk.ReadBytes >= r.lastDisk.ReadBytes {
+			stats.Disk.ReadSpeed = uint64(float64(stats.Disk.ReadBytes-r.lastDisk.ReadBytes) / duration)
+		}
+		if stats.Disk.WriteBytes >= r.lastDisk.WriteBytes {
+			stats.Disk.WriteSpeed = uint64(float64(stats.Disk.WriteBytes-r.lastDisk.WriteBytes) / duration)
+		}
+
+		// Net Speed
+		if stats.Net.BytesSent >= r.lastNet.BytesSent {
+			stats.Net.UploadSpeed = uint64(float64(stats.Net.BytesSent-r.lastNet.BytesSent) / duration)
+		}
+		if stats.Net.BytesRecv >= r.lastNet.BytesRecv {
+			stats.Net.DownloadSpeed = uint64(float64(stats.Net.BytesRecv-r.lastNet.BytesRecv) / duration)
 		}
 	}
+
+	// Update History Buffers
+	appendHistory := func(buffer *[]float64, val uint64) {
+		*buffer = append(*buffer, float64(val))
+		if len(*buffer) > 100 {
+			*buffer = (*buffer)[1:]
+		}
+	}
+
+	appendHistory(&r.diskReadHistory, stats.Disk.ReadSpeed)
+	appendHistory(&r.diskWriteHistory, stats.Disk.WriteSpeed)
+	appendHistory(&r.netUploadHistory, stats.Net.UploadSpeed)
+	appendHistory(&r.netDownloadHistory, stats.Net.DownloadSpeed)
+
+	// Assign history to stats
+	stats.Disk.ReadHistory = make([]float64, len(r.diskReadHistory))
+	copy(stats.Disk.ReadHistory, r.diskReadHistory)
+	stats.Disk.WriteHistory = make([]float64, len(r.diskWriteHistory))
+	copy(stats.Disk.WriteHistory, r.diskWriteHistory)
+
+	stats.Net.UploadHistory = make([]float64, len(r.netUploadHistory))
+	copy(stats.Net.UploadHistory, r.netUploadHistory)
+	stats.Net.DownloadHistory = make([]float64, len(r.netDownloadHistory))
+	copy(stats.Net.DownloadHistory, r.netDownloadHistory)
+
+	// Update last states
 	r.lastTime = now
 	r.lastDisk = stats.Disk
 	r.lastNet = stats.Net

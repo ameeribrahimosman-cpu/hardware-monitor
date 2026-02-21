@@ -209,9 +209,10 @@ func (m *ProcessModel) SetSize(w, h int) {
 	m.height = h
 
 	// Calculate available height for table
-	tableHeight := h - 4
-	if tableHeight < 1 {
-		tableHeight = 1
+	// Header(1) + Mem(1) + Swap(1) + Net(3) + Disk(3) + Spacing = ~10
+	tableHeight := h - 10
+	if tableHeight < 2 {
+		tableHeight = 2
 	}
 	m.table.SetHeight(tableHeight)
 
@@ -269,25 +270,19 @@ func (m ProcessModel) View() string {
 	memBar := renderBar(int(m.stats.Memory.UsedPercent), 100, m.width-4, fmt.Sprintf("Mem %.1f%%", m.stats.Memory.UsedPercent))
 	swapBar := renderBar(int(m.stats.Memory.SwapPercent), 100, m.width-4, fmt.Sprintf("Swap %.1f%%", m.stats.Memory.SwapPercent))
 
-	// Net/Disk (simple bars for speed/activity)
-	// Use 100MB/s as arbitrary max for visualization for now
-	const maxIO = 100 * 1024 * 1024 // 100MB
+	halfWidth := m.width/2 - 2
+	if halfWidth < 10 {
+		halfWidth = 10
+	}
 
-	// We need speed (bytes/sec) but stats.Net is Total Bytes.
-	// ProcessModel doesn't store previous stats to calc speed?
-	// metrics.SystemStats has DiskStats which has ReadSpeed/WriteSpeed?
-	// Let's check internal/metrics/types.go. Yes!
+	netDown := RenderSparkline(m.stats.Net.DownloadHistory, halfWidth, 2, 0, fmt.Sprintf("Net ↓ %s/s", formatBytes(m.stats.Net.DownloadSpeed)))
+	netUp := RenderSparkline(m.stats.Net.UploadHistory, halfWidth, 2, 0, fmt.Sprintf("Net ↑ %s/s", formatBytes(m.stats.Net.UploadSpeed)))
 
-	netDownBar := renderBar(int(m.stats.Net.DownloadSpeed), maxIO, m.width/2-2, fmt.Sprintf("Net ↓ %s/s", formatBytes(m.stats.Net.DownloadSpeed)))
-	netUpBar := renderBar(int(m.stats.Net.UploadSpeed), maxIO, m.width/2-2, fmt.Sprintf("Net ↑ %s/s", formatBytes(m.stats.Net.UploadSpeed)))
+	diskRead := RenderSparkline(m.stats.Disk.ReadHistory, halfWidth, 2, 0, fmt.Sprintf("Disk R %s/s", formatBytes(m.stats.Disk.ReadSpeed)))
+	diskWrite := RenderSparkline(m.stats.Disk.WriteHistory, halfWidth, 2, 0, fmt.Sprintf("Disk W %s/s", formatBytes(m.stats.Disk.WriteSpeed)))
 
-	diskReadBar := renderBar(int(m.stats.Disk.ReadSpeed), maxIO, m.width/2-2, fmt.Sprintf("Disk R %s/s", formatBytes(m.stats.Disk.ReadSpeed)))
-	diskWriteBar := renderBar(int(m.stats.Disk.WriteSpeed), maxIO, m.width/2-2, fmt.Sprintf("Disk W %s/s", formatBytes(m.stats.Disk.WriteSpeed)))
-
-	ioRow1 := lipgloss.JoinHorizontal(lipgloss.Top, netDownBar, " ", netUpBar)
-	ioRow2 := lipgloss.JoinHorizontal(lipgloss.Top, diskReadBar, " ", diskWriteBar)
-
-	headerText := fmt.Sprintf("Processes (Sort: %s) [c:CPU m:MEM p:PID k:Kill]", strings.ToUpper(m.sortBy))
+	ioRow1 := lipgloss.JoinHorizontal(lipgloss.Top, netDown, "  ", netUp)
+	ioRow2 := lipgloss.JoinHorizontal(lipgloss.Top, diskRead, "  ", diskWrite)
 
 	return style.Render(lipgloss.JoinVertical(lipgloss.Left,
 		header,
